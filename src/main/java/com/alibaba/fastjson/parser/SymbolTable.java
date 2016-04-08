@@ -22,29 +22,22 @@ import com.alibaba.fastjson.JSON;
  */
 public class SymbolTable {
 
-    public static final int DEFAULT_TABLE_SIZE = 512;
-    public static final int MAX_BUCKET_LENTH   = 8;
-    public static final int MAX_SIZE           = 4096;
+    private final Entry[]  buckets;
+    private final String[] symbols;
+    private final char[][] symbols_char;
 
-    private final Entry[]   buckets;
-    private final String[]  symbols;
-    private final char[][]  symbols_char;
+    private final int      indexMask;
 
-    private final int       indexMask;
-
-    private int             size               = 0;
-
-    public SymbolTable(){
-        this(DEFAULT_TABLE_SIZE);
-        this.addSymbol("$ref", 0, 4, "$ref".hashCode());
-        this.addSymbol(JSON.DEFAULT_TYPE_KEY, 0, 5, JSON.DEFAULT_TYPE_KEY.hashCode());
-    }
+    private int            size = 0;
 
     public SymbolTable(int tableSize){
         this.indexMask = tableSize - 1;
         this.buckets = new Entry[tableSize];
         this.symbols = new String[tableSize];
         this.symbols_char = new char[tableSize][];
+        
+        this.addSymbol("$ref", 0, 4, "$ref".hashCode());
+        this.addSymbol(JSON.DEFAULT_TYPE_KEY, 0, 5, JSON.DEFAULT_TYPE_KEY.hashCode());
     }
 
     public String addSymbol(char[] buffer, int offset, int len) {
@@ -109,12 +102,12 @@ public class SymbolTable {
                     return entry.symbol;
                 }
             }
-            if (entryIndex >= MAX_BUCKET_LENTH) {
+            if (entryIndex >= 8) {
                 return new String(buffer, offset, len);
             }
         }
 
-        if (size >= MAX_SIZE) {
+        if (size >= 4096) {
             return new String(buffer, offset, len);
         }
 
@@ -175,15 +168,15 @@ public class SymbolTable {
                     return entry.symbol;
                 }
             }
-            if (entryIndex >= MAX_BUCKET_LENTH) {
-                return buffer.substring(offset, offset + len);
-                // return new String(buffer, offset, len);
+            if (entryIndex >= 8) {
+                // return buffer.substring(offset, offset + len);
+                return subString(buffer, offset, len);
             }
         }
 
-        if (size >= MAX_SIZE) {
-            // return new String(buffer, offset, len);
-            return buffer.substring(offset, offset + len);
+        if (size >= 4096) {
+            // return buffer.substring(offset, offset + len);
+            return subString(buffer, offset, len);
         }
 
         Entry entry = new Entry(buffer, offset, len, hash, buckets[bucket]);
@@ -195,12 +188,16 @@ public class SymbolTable {
         size++;
         return entry.symbol;
     }
-
-    public int size() {
-        return size;
+    
+    private static String subString(String src, int offset, int len) {
+        char[] chars = new char[len];
+        for (int i = offset; i < offset + len; ++i) {
+            chars[i - offset] = src.charAt(i);
+        }
+        return new String(chars);
     }
 
-    public static final int hash(char[] buffer, int offset, int len) {
+    public static int hash(char[] buffer, int offset, int len) {
         int h = 0;
         int off = offset;
 
@@ -233,7 +230,8 @@ public class SymbolTable {
         }
 
         public Entry(String text, int offset, int length, int hash, Entry next){
-            symbol = text.substring(offset, offset + length).intern();
+            // symbol = text.substring(offset, offset + length).intern();
+            symbol = subString(text, offset, length).intern();
             characters = symbol.toCharArray();
             this.next = next;
             this.hashCode = hash;

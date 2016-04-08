@@ -6,6 +6,7 @@ import java.util.Map;
 import com.alibaba.fastjson.parser.DefaultJSONParser;
 import com.alibaba.fastjson.parser.JSONLexer;
 import com.alibaba.fastjson.parser.ParserConfig;
+import com.alibaba.fastjson.util.JavaBeanInfo;
 import com.alibaba.fastjson.util.FieldInfo;
 
 public abstract class ASMJavaBeanDeserializer implements ObjectDeserializer {
@@ -14,8 +15,6 @@ public abstract class ASMJavaBeanDeserializer implements ObjectDeserializer {
 
     public ASMJavaBeanDeserializer(ParserConfig mapping, Class<?> clazz){
         serializer = new InnerJavaBeanDeserializer(mapping, clazz);
-
-        serializer.getFieldDeserializerMap();
     }
 
     public abstract Object createInstance(DefaultJSONParser parser, Type type);
@@ -37,33 +36,23 @@ public abstract class ASMJavaBeanDeserializer implements ObjectDeserializer {
         return serializer.createInstance(parser, serializer.getClazz());
     }
 
-    public FieldDeserializer createFieldDeserializer(ParserConfig mapping, Class<?> clazz, FieldInfo fieldInfo) {
-        return mapping.createFieldDeserializer(mapping, clazz, fieldInfo);
+    public FieldDeserializer createFieldDeserializer(ParserConfig mapping, JavaBeanInfo beanInfo, FieldInfo fieldInfo) {
+        return mapping.createFieldDeserializer(mapping, beanInfo, fieldInfo);
     }
 
     public FieldDeserializer getFieldDeserializer(String name) {
-        return serializer.getFieldDeserializerMap().get(name);
+        return serializer.getFieldDeserializer(name);
     }
 
     public Type getFieldType(String name) {
-        return serializer.getFieldDeserializerMap().get(name).getFieldType();
+        return serializer.getFieldDeserializer(name).fieldInfo.fieldType;
     }
 
     public boolean parseField(DefaultJSONParser parser, String key, Object object, Type objectType,
                               Map<String, Object> fieldValues) {
-        JSONLexer lexer = parser.getLexer(); // xxx
+        JSONLexer lexer = parser.lexer; // xxx
 
-        Map<String, FieldDeserializer> feildDeserializerMap = serializer.getFieldDeserializerMap();
-        FieldDeserializer fieldDeserializer = feildDeserializerMap.get(key);
-
-        if (fieldDeserializer == null) {
-            for (Map.Entry<String, FieldDeserializer> entry : feildDeserializerMap.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(key)) {
-                    fieldDeserializer = entry.getValue();
-                    break;
-                }
-            }
-        }
+        FieldDeserializer fieldDeserializer = serializer.smartMatch(key);
 
         if (fieldDeserializer == null) {
             this.serializer.parseExtra(parser, object, key);
@@ -86,8 +75,8 @@ public abstract class ASMJavaBeanDeserializer implements ObjectDeserializer {
             return ASMJavaBeanDeserializer.this.parseField(parser, key, object, objectType, fieldValues);
         }
 
-        public FieldDeserializer createFieldDeserializer(ParserConfig mapping, Class<?> clazz, FieldInfo fieldInfo) {
-            return ASMJavaBeanDeserializer.this.createFieldDeserializer(mapping, clazz, fieldInfo);
+        public FieldDeserializer createFieldDeserializer(ParserConfig mapping, JavaBeanInfo beanInfo, FieldInfo fieldInfo) {
+            return ASMJavaBeanDeserializer.this.createFieldDeserializer(mapping, beanInfo, fieldInfo);
         }
     }
     

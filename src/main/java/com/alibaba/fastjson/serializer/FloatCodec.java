@@ -32,10 +32,10 @@ public class FloatCodec implements ObjectSerializer, ObjectDeserializer {
     public static FloatCodec instance = new FloatCodec();
 
     public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType, int features) throws IOException {
-        SerializeWriter out = serializer.getWriter();
+        SerializeWriter out = serializer.out;
         
         if (object == null) {
-            if (serializer.isEnabled(SerializerFeature.WriteNullNumberAsZero)) {
+            if (out.isEnabled(SerializerFeature.WriteNullNumberAsZero)) {
                 out.write('0');
             } else {
                 out.writeNull();                
@@ -56,7 +56,7 @@ public class FloatCodec implements ObjectSerializer, ObjectDeserializer {
             }
             out.write(floatText);
             
-            if (serializer.isEnabled(SerializerFeature.WriteClassName)) {
+            if (out.isEnabled(SerializerFeature.WriteClassName)) {
                 out.write('F');
             }
         }
@@ -69,7 +69,7 @@ public class FloatCodec implements ObjectSerializer, ObjectDeserializer {
 
     @SuppressWarnings("unchecked")
     public static <T> T deserialze(DefaultJSONParser parser) {
-        final JSONLexer lexer = parser.getLexer();
+        final JSONLexer lexer = parser.lexer;
         if (lexer.token() == JSONToken.LITERAL_INT) {
             String val = lexer.numberString();
             lexer.nextToken(JSONToken.COMMA);

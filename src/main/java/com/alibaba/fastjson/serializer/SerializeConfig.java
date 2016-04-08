@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.Serializable;
 import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
@@ -55,11 +56,14 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONAware;
 import com.alibaba.fastjson.JSONException;
 import com.alibaba.fastjson.JSONStreamAware;
+import com.alibaba.fastjson.annotation.JSONField;
 import com.alibaba.fastjson.annotation.JSONType;
 import com.alibaba.fastjson.parser.deserializer.Jdk8DateCodec;
+import com.alibaba.fastjson.parser.deserializer.OptionalCodec;
 import com.alibaba.fastjson.util.ASMUtils;
 import com.alibaba.fastjson.util.IdentityHashMap;
 import com.alibaba.fastjson.util.ServiceLoader;
+import com.alibaba.fastjson.util.TypeUtils;
 
 /**
  * circular references detect
@@ -69,7 +73,11 @@ import com.alibaba.fastjson.util.ServiceLoader;
 public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 	private final static SerializeConfig globalInstance = new SerializeConfig();
 
-	private boolean asm = !ASMUtils.isAndroid();;
+	private static boolean awtError = false;
+	private static boolean jdk8Error = false;
+	private static boolean oracleJdbcError = false;
+	
+	private boolean asm = !ASMUtils.IS_ANDROID;
 
 	private ASMSerializerFactory asmFactory;
 	
@@ -96,7 +104,7 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 
 		boolean asm = this.asm;
 
-		if (asm && asmFactory.isExternalClass(clazz)
+		if (asm && asmFactory.classLoader.isExternalClass(clazz)
 				|| clazz == Serializable.class || clazz == Object.class) {
 			asm = false;
 		}
@@ -107,11 +115,21 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 				asm = false;
 			}
 		}
-		
+
 		if (asm && !ASMUtils.checkName(clazz.getName())) {
 		    asm = false;
 		}
-
+		
+		if (asm) {
+    		for(Field field : clazz.getDeclaredFields()){
+    			JSONField annotation = field.getAnnotation(JSONField.class);
+    			if (annotation != null && !ASMUtils.checkName(annotation.name())) {
+    				asm = false;
+    				break;
+    			}
+    		}
+		}
+		
 		if (asm) {
 			try {
 			    ObjectSerializer asmSerializer = createASMSerializer(clazz);
@@ -137,19 +155,21 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 		this.asm = asmEnable;
 	}
 
-	public final static SerializeConfig getGlobalInstance() {
+	public static SerializeConfig getGlobalInstance() {
 		return globalInstance;
 	}
 
 	public SerializeConfig() {
-		this(DEFAULT_TABLE_SIZE);
+		this(1024);
 	}
 
 	public SerializeConfig(int tableSize) {
 		super(tableSize);
 		
 		try {
-		    asmFactory = new ASMSerializerFactory();
+		    if (asm) {
+		        asmFactory = new ASMSerializerFactory();
+		    }
 		} catch (NoClassDefFoundError eror) {
 		    asm = false;
 		} catch (ExceptionInInitializerError error) {
@@ -167,74 +187,93 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 		put(BigDecimal.class, BigDecimalCodec.instance);
 		put(BigInteger.class, BigIntegerCodec.instance);
 		put(String.class, StringCodec.instance);
-		put(byte[].class, ByteArraySerializer.instance);
-		put(short[].class, ShortArraySerializer.instance);
-		put(int[].class, IntArraySerializer.instance);
-		put(long[].class, LongArraySerializer.instance);
-		put(float[].class, FloatArraySerializer.instance);
-		put(double[].class, DoubleArraySerializer.instance);
-		put(boolean[].class, BooleanArraySerializer.instance);
-		put(char[].class, CharArraySerializer.instance);
-		put(Object[].class, ObjectArraySerializer.instance);
-		put(Class.class, ClassSerializer.instance);
+		put(byte[].class, PrimitiveArraySerializer.instance);
+		put(short[].class, PrimitiveArraySerializer.instance);
+		put(int[].class, PrimitiveArraySerializer.instance);
+		put(long[].class, PrimitiveArraySerializer.instance);
+		put(float[].class, PrimitiveArraySerializer.instance);
+		put(double[].class, PrimitiveArraySerializer.instance);
+		put(boolean[].class, PrimitiveArraySerializer.instance);
+		put(char[].class, PrimitiveArraySerializer.instance);
+		put(Object[].class, ObjectArrayCodec.instance);
+		put(Class.class, MiscCodec.instance);
 
-		put(SimpleDateFormat.class, DateFormatSerializer.instance);
-		put(Locale.class, LocaleCodec.instance);
+		put(SimpleDateFormat.class, MiscCodec.instance);
+		put(Locale.class, MiscCodec.instance);
 		put(Currency.class, CurrencyCodec.instance);
-		put(TimeZone.class, TimeZoneCodec.instance);
-		put(UUID.class, UUIDCodec.instance);
-		put(InetAddress.class, InetAddressCodec.instance);
-		put(Inet4Address.class, InetAddressCodec.instance);
-		put(Inet6Address.class, InetAddressCodec.instance);
-		put(InetSocketAddress.class, InetSocketAddressCodec.instance);
-		put(File.class, FileCodec.instance);
-		put(URI.class, URICodec.instance);
-		put(URL.class, URLCodec.instance);
+		put(TimeZone.class, MiscCodec.instance);
+		put(UUID.class, MiscCodec.instance);
+		put(InetAddress.class, MiscCodec.instance);
+		put(Inet4Address.class, MiscCodec.instance);
+		put(Inet6Address.class, MiscCodec.instance);
+		put(InetSocketAddress.class, MiscCodec.instance);
+		put(File.class, MiscCodec.instance);
+		put(URI.class, MiscCodec.instance);
+		put(URL.class, MiscCodec.instance);
 		put(Appendable.class, AppendableSerializer.instance);
 		put(StringBuffer.class, AppendableSerializer.instance);
 		put(StringBuilder.class, AppendableSerializer.instance);
-		put(Pattern.class, PatternCodec.instance);
+		put(Pattern.class, MiscCodec.instance);
 		put(Charset.class, CharsetCodec.instance);
 
 		// atomic
-		put(AtomicBoolean.class, AtomicBooleanSerializer.instance);
-		put(AtomicInteger.class, AtomicIntegerSerializer.instance);
-		put(AtomicLong.class, AtomicLongSerializer.instance);
+		put(AtomicBoolean.class, AtomicCodec.instance);
+		put(AtomicInteger.class, AtomicCodec.instance);
+		put(AtomicLong.class, AtomicCodec.instance);
 		put(AtomicReference.class, ReferenceCodec.instance);
-		put(AtomicIntegerArray.class, AtomicIntegerArrayCodec.instance);
-		put(AtomicLongArray.class, AtomicLongArrayCodec.instance);
+		put(AtomicIntegerArray.class, AtomicCodec.instance);
+		put(AtomicLongArray.class, AtomicCodec.instance);
 		
 		put(WeakReference.class, ReferenceCodec.instance);
 		put(SoftReference.class, ReferenceCodec.instance);
 
 		// awt
-		try {
-			put(Class.forName("java.awt.Color"), ColorCodec.instance);
-			put(Class.forName("java.awt.Font"), FontCodec.instance);
-			put(Class.forName("java.awt.Point"), PointCodec.instance);
-			put(Class.forName("java.awt.Rectangle"),
-					RectangleCodec.instance);
-		} catch (Throwable e) {
-			// skip
+		if (!awtError) {
+    		try {
+    			put(Class.forName("java.awt.Color"), AwtCodec.instance);
+    			put(Class.forName("java.awt.Font"), AwtCodec.instance);
+    			put(Class.forName("java.awt.Point"), AwtCodec.instance);
+                put(Class.forName("java.awt.Rectangle"), AwtCodec.instance);
+    		} catch (Throwable e) {
+    		    awtError = true;
+    			// skip
+    		}
 		}
 		
 		// jdk8
-		try {
-		    put(Class.forName("java.time.LocalDateTime"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.LocalDate"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.LocalTime"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.ZonedDateTime"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.OffsetDateTime"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.OffsetTime"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.ZoneOffset"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.ZoneRegion"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.Period"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.Duration"), Jdk8DateCodec.instance);
-		    put(Class.forName("java.time.Instant"), Jdk8DateCodec.instance);
-		} catch (Throwable e) {
-		    // skip
+		if (!jdk8Error) {
+    		try {
+    		    put(Class.forName("java.time.LocalDateTime"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.LocalDate"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.LocalTime"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.ZonedDateTime"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.OffsetDateTime"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.OffsetTime"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.ZoneOffset"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.ZoneRegion"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.Period"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.Duration"), Jdk8DateCodec.instance);
+    		    put(Class.forName("java.time.Instant"), Jdk8DateCodec.instance);
+    		    
+    		    put(Class.forName("java.util.Optional"), OptionalCodec.instance);
+    		    put(Class.forName("java.util.OptionalDouble"), OptionalCodec.instance);
+    		    put(Class.forName("java.util.OptionalInt"), OptionalCodec.instance);
+    		    put(Class.forName("java.util.OptionalLong"), OptionalCodec.instance);
+    		} catch (Throwable e) {
+    		    // skip
+    		    jdk8Error = true;
+    		}
 		}
-
+		
+		if (!oracleJdbcError) {
+		    try {
+                put(Class.forName("oracle.sql.DATE"), DateCodec.instance);
+                put(Class.forName("oracle.sql.TIMESTAMP"), DateCodec.instance);
+            } catch (Throwable e) {
+                // skip
+                oracleJdbcError = true;
+            }
+		}
 	}
 
 	public ObjectSerializer getObjectWriter(Class<?> clazz) {
@@ -285,19 +324,19 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
 
         if (writer == null) {
             if (Map.class.isAssignableFrom(clazz)) {
-                put(clazz, MapSerializer.instance);
+                put(clazz, MapCodec.instance);
             } else if (List.class.isAssignableFrom(clazz)) {
                 put(clazz, ListSerializer.instance);
             } else if (Collection.class.isAssignableFrom(clazz)) {
-                put(clazz, CollectionSerializer.instance);
+                put(clazz, CollectionCodec.instance);
             } else if (Date.class.isAssignableFrom(clazz)) {
-                put(clazz, DateSerializer.instance);
+                put(clazz, DateCodec.instance);
             } else if (JSONAware.class.isAssignableFrom(clazz)) {
                 put(clazz, JSONAwareSerializer.instance);
             } else if (JSONSerializable.class.isAssignableFrom(clazz)) {
                 put(clazz, JSONSerializableSerializer.instance);
             } else if (JSONStreamAware.class.isAssignableFrom(clazz)) {
-                put(clazz, JSONStreamAwareSerializer.instance);
+                put(clazz, MiscCodec.instance);
             } else if (clazz.isEnum() || (clazz.getSuperclass() != null && clazz.getSuperclass().isEnum())) {
                 put(clazz, EnumSerializer.instance);
             } else if (clazz.isArray()) {
@@ -305,15 +344,17 @@ public class SerializeConfig extends IdentityHashMap<Type, ObjectSerializer> {
                 ObjectSerializer compObjectSerializer = getObjectWriter(componentType);
                 put(clazz, new ArraySerializer(componentType, compObjectSerializer));
             } else if (Throwable.class.isAssignableFrom(clazz)) {
-                put(clazz, new ExceptionSerializer(clazz));
+                int features = TypeUtils.getSerializeFeatures(clazz);
+                features |= SerializerFeature.WriteClassName.mask;
+                put(clazz, new JavaBeanSerializer(clazz, null, features));
             } else if (TimeZone.class.isAssignableFrom(clazz)) {
-                put(clazz, TimeZoneCodec.instance);
+                put(clazz, MiscCodec.instance);
             } else if (Appendable.class.isAssignableFrom(clazz)) {
                 put(clazz, AppendableSerializer.instance);
             } else if (Charset.class.isAssignableFrom(clazz)) {
                 put(clazz, CharsetCodec.instance);
             } else if (Enumeration.class.isAssignableFrom(clazz)) {
-                put(clazz, EnumerationSeriliazer.instance);
+                put(clazz, EnumerationSerializer.instance);
             } else if (Calendar.class.isAssignableFrom(clazz)) {
                 put(clazz, CalendarCodec.instance);
             } else if (Clob.class.isAssignableFrom(clazz)) {

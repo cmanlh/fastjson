@@ -15,10 +15,10 @@
  */
 package com.alibaba.fastjson.serializer;
 
-import java.util.Collection;
-
 import com.alibaba.fastjson.annotation.JSONField;
 import com.alibaba.fastjson.util.FieldInfo;
+
+import java.util.Collection;
 
 /**
  * @author wenshao[szujobs@hotmail.com]
@@ -31,13 +31,14 @@ public class ObjectFieldSerializer extends FieldSerializer {
     boolean                       writeNullBooleanAsFalse = false;
     boolean                       writeNullListAsEmpty    = false;
     boolean                       writeEnumUsingToString  = false;
+    boolean                       writeEnumUsingName      = false;
 
     private RuntimeSerializerInfo runtimeInfo;
 
     public ObjectFieldSerializer(FieldInfo fieldInfo){
         super(fieldInfo);
 
-        JSONField annotation = fieldInfo.getAnnotation(JSONField.class);
+        JSONField annotation = fieldInfo.getAnnotation();
 
         if (annotation != null) {
             format = annotation.format();
@@ -57,6 +58,8 @@ public class ObjectFieldSerializer extends FieldSerializer {
                     writeNullListAsEmpty = true;
                 } else if (feature == SerializerFeature.WriteEnumUsingToString) {
                     writeEnumUsingToString = true;
+                }else if(feature == SerializerFeature.WriteEnumUsingName){
+                    writeEnumUsingName = true;
                 }
             }
         }
@@ -78,7 +81,7 @@ public class ObjectFieldSerializer extends FieldSerializer {
 
             Class<?> runtimeFieldClass;
             if (propertyValue == null) {
-                runtimeFieldClass = this.fieldInfo.getFieldClass();
+                runtimeFieldClass = this.fieldInfo.fieldClass;
             } else {
                 runtimeFieldClass = propertyValue.getClass();
             }
@@ -89,40 +92,47 @@ public class ObjectFieldSerializer extends FieldSerializer {
         
         final RuntimeSerializerInfo runtimeInfo = this.runtimeInfo;
         
-        final int fieldFeatures = fieldInfo.getSerialzeFeatures();
+        final int fieldFeatures = fieldInfo.serialzeFeatures;
 
         if (propertyValue == null) {
             if (writeNumberAsZero && Number.class.isAssignableFrom(runtimeInfo.runtimeFieldClass)) {
-                serializer.getWriter().write('0');
+                serializer.out.write('0');
                 return;
             } else if (writeNullStringAsEmpty && String.class == runtimeInfo.runtimeFieldClass) {
-                serializer.getWriter().write("\"\"");
+                serializer.out.write("\"\"");
                 return;
             } else if (writeNullBooleanAsFalse && Boolean.class == runtimeInfo.runtimeFieldClass) {
-                serializer.getWriter().write("false");
+                serializer.out.write("false");
                 return;
             } else if (writeNullListAsEmpty && Collection.class.isAssignableFrom(runtimeInfo.runtimeFieldClass)) {
-                serializer.getWriter().write("[]");
+                serializer.out.write("[]");
                 return;
             }
 
-            runtimeInfo.fieldSerializer.write(serializer, null, fieldInfo.getName(), null, fieldFeatures);
+            runtimeInfo.fieldSerializer.write(serializer, null, fieldInfo.name, null, fieldFeatures);
             return;
         }
 
-        if (writeEnumUsingToString == true && runtimeInfo.runtimeFieldClass.isEnum()) {
-            serializer.getWriter().writeString(((Enum<?>) propertyValue).name());
-            return;
-        }
+        if (fieldInfo.isEnum) {
+            if (writeEnumUsingName) {
+                serializer.out.writeString(((Enum<?>) propertyValue).name());
+                return;
+            }
 
+            if (writeEnumUsingToString) {
+                serializer.out.writeString(((Enum<?>) propertyValue).toString());
+                return;
+            }
+        }
+        
         Class<?> valueClass = propertyValue.getClass();
         if (valueClass == runtimeInfo.runtimeFieldClass) {
-            runtimeInfo.fieldSerializer.write(serializer, propertyValue, fieldInfo.getName(), fieldInfo.getFieldType(), fieldFeatures);
+            runtimeInfo.fieldSerializer.write(serializer, propertyValue, fieldInfo.name, fieldInfo.fieldType, fieldFeatures);
             return;
         }
 
         ObjectSerializer valueSerializer = serializer.getObjectWriter(valueClass);
-        valueSerializer.write(serializer, propertyValue, fieldInfo.getName(), fieldInfo.getFieldType(), fieldFeatures);
+        valueSerializer.write(serializer, propertyValue, fieldInfo.name, fieldInfo.fieldType, fieldFeatures);
     }
 
     static class RuntimeSerializerInfo {

@@ -20,12 +20,12 @@ public class IntegerFieldDeserializer extends FieldDeserializer {
     public void parseField(DefaultJSONParser parser, Object object, Type objectType, Map<String, Object> fieldValues) {
         Integer value;
 
-        final JSONLexer lexer = parser.getLexer();
+        final JSONLexer lexer = parser.lexer;
         if (lexer.token() == JSONToken.LITERAL_INT) {
             int val = lexer.intValue();
             lexer.nextToken(JSONToken.COMMA);
             if (object == null) {
-                fieldValues.put(fieldInfo.getName(), val);
+                fieldValues.put(fieldInfo.name, val);
             } else {
                 setValue(object, val);
             }
@@ -39,13 +39,13 @@ public class IntegerFieldDeserializer extends FieldDeserializer {
             value = TypeUtils.castToInt(obj);
         }
 
-        if (value == null && getFieldClass() == int.class) {
+        if (value == null && fieldInfo.fieldClass == int.class) {
             // skip
             return;
         }
 
         if (object == null) {
-            fieldValues.put(fieldInfo.getName(), value);
+            fieldValues.put(fieldInfo.name, value);
         } else {
             setValue(object, value);
         }

@@ -18,7 +18,9 @@ public @interface JSONType {
     boolean asm() default true;
 
     String[] orders() default {};
-    
+
+    String[] includes() default {};
+
     String[] ignores() default {};
 
     SerializerFeature[] serialzeFeatures() default {};
@@ -27,4 +29,6 @@ public @interface JSONType {
     boolean alphabetic() default true;
     
     Class<?> mappingTo() default Void.class;
+    
+    Class<?> builder() default Void.class;
 }

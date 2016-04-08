@@ -16,8 +16,7 @@
 package com.alibaba.fastjson.serializer;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.lang.reflect.Member;
 
 import com.alibaba.fastjson.JSONException;
 import com.alibaba.fastjson.annotation.JSONField;
@@ -26,61 +25,50 @@ import com.alibaba.fastjson.util.FieldInfo;
 /**
  * @author wenshao[szujobs@hotmail.com]
  */
-public abstract class FieldSerializer {
+public abstract class FieldSerializer implements Comparable<FieldSerializer> {
 
-    protected final FieldInfo fieldInfo;
-    private final String      double_quoted_fieldPrefix;
-    private final String      single_quoted_fieldPrefix;
-    private final String      un_quoted_fieldPrefix;
-    private boolean           writeNull = false;
+    public final FieldInfo  fieldInfo;
+    private final String    double_quoted_fieldPrefix;
+    private String          single_quoted_fieldPrefix;
+    private String          un_quoted_fieldPrefix;
+    protected final boolean writeNull;
 
     public FieldSerializer(FieldInfo fieldInfo){
         super();
         this.fieldInfo = fieldInfo;
-        fieldInfo.setAccessible(true);
+        fieldInfo.setAccessible();
 
-        this.double_quoted_fieldPrefix = '"' + fieldInfo.getName() + "\":";
+        this.double_quoted_fieldPrefix = '"' + fieldInfo.name + "\":";
 
-        this.single_quoted_fieldPrefix = '\'' + fieldInfo.getName() + "\':";
-
-        this.un_quoted_fieldPrefix = fieldInfo.getName() + ":";
-
-        JSONField annotation = fieldInfo.getAnnotation(JSONField.class);
+        boolean writeNull = false;
+        JSONField annotation = fieldInfo.getAnnotation();
         if (annotation != null) {
             for (SerializerFeature feature : annotation.serialzeFeatures()) {
                 if (feature == SerializerFeature.WriteMapNullValue) {
                     writeNull = true;
+                    break;
                 }
             }
         }
-    }
-
-    public boolean isWriteNull() {
-        return writeNull;
-    }
-
-    public Field getField() {
-        return fieldInfo.getField();
-    }
-
-    public String getName() {
-        return fieldInfo.getName();
-    }
-
-    public Method getMethod() {
-        return fieldInfo.getMethod();
+        this.writeNull = writeNull;
     }
 
     public void writePrefix(JSONSerializer serializer) throws IOException {
-        SerializeWriter out = serializer.getWriter();
+        SerializeWriter out = serializer.out;
 
-        if (serializer.isEnabled(SerializerFeature.QuoteFieldNames)) {
-            if (serializer.isEnabled(SerializerFeature.UseSingleQuotes)) {
+        if (out.quoteFieldNames) {
+            if (out.useSingleQuotes) {
+                if (single_quoted_fieldPrefix == null) {
+                    single_quoted_fieldPrefix = '\'' + fieldInfo.name + "\':";
+                }
                 out.write(single_quoted_fieldPrefix);
             } else {
                 out.write(double_quoted_fieldPrefix);
             }
         } else {
+            if (un_quoted_fieldPrefix == null) {
+                this.un_quoted_fieldPrefix = fieldInfo.name + ":";
+            }
             out.write(un_quoted_fieldPrefix);
         }
     }
@@ -89,11 +77,18 @@ public abstract class FieldSerializer {
         try {
             return fieldInfo.get(object);
         } catch (Exception ex) {
-            throw new JSONException("get property error。 " + fieldInfo.gerQualifiedName(), ex);
+            Member member =  fieldInfo.getMember();
+            String qualifiedName = member.getDeclaringClass().getName() + "." + member.getName();
+            
+            throw new JSONException("get property error。 " + qualifiedName, ex);
         }
     }
 
     public abstract void writeProperty(JSONSerializer serializer, Object propertyValue) throws Exception;
 
     public abstract void writeValue(JSONSerializer serializer, Object propertyValue) throws Exception;
+    
+    public int compareTo(FieldSerializer o) {
+        return this.fieldInfo.compareTo(o.fieldInfo);
+    }
 }

@@ -84,28 +84,40 @@ public enum Feature {
      * @since 1.1.35
      * 
      */
-    SupportArrayToBean
+    SupportArrayToBean,
+    
+    /**
+     * @since 1.2.3
+     * 
+     */
+    OrderedField,
+    
+    /**
+     * @since 1.2.5
+     * 
+     */
+    DisableSpecialKeyDetect
     ;
 
-    private Feature(){
+    Feature(){
         mask = (1 << ordinal());
     }
 
-    private final int mask;
+    public final int mask;
 
     public final int getMask() {
         return mask;
     }
 
     public static boolean isEnabled(int features, Feature feature) {
-        return (features & feature.getMask()) != 0;
+        return (features & feature.mask) != 0;
     }
 
     public static int config(int features, Feature feature, boolean state) {
         if (state) {
-            features |= feature.getMask();
+            features |= feature.mask;
         } else {
-            features &= ~feature.getMask();
+            features &= ~feature.mask;
         }
 
         return features;
@@ -119,7 +131,7 @@ public enum Feature {
         int value = 0;
         
         for (Feature feature: features) {
-            value |= feature.getMask();
+            value |= feature.mask;
         }
         
         return value;

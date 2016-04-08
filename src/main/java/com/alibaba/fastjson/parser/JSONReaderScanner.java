@@ -23,7 +23,6 @@ import java.lang.ref.SoftReference;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONException;
-import com.alibaba.fastjson.util.Base64;
 import com.alibaba.fastjson.util.IOUtils;
 
 //这个类，为了性能优化做了很多特别处理，一切都是为了性能！！！
@@ -143,6 +142,8 @@ public final class JSONReaderScanner extends JSONLexerBase {
         return symbolTable.addSymbol(buf, offset, len, hash);
     }
 
+
+
     public final char next() {
         int index = ++bp;
 
@@ -206,7 +207,7 @@ public final class JSONReaderScanner extends JSONLexerBase {
     }
 
     public byte[] bytesValue() {
-        return Base64.decodeFast(buf, np + 1, sp);
+        return IOUtils.decodeFast(buf, np + 1, sp);
     }
 
     protected final void arrayCopy(int srcPos, char[] dest, int destPos, int length) {

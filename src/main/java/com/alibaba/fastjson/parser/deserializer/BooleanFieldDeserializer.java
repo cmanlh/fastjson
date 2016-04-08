@@ -20,11 +20,11 @@ public class BooleanFieldDeserializer extends FieldDeserializer {
     public void parseField(DefaultJSONParser parser, Object object, Type objectType, Map<String, Object> fieldValues) {
         Boolean value;
 
-        final JSONLexer lexer = parser.getLexer();
+        final JSONLexer lexer = parser.lexer;
         if (lexer.token() == JSONToken.TRUE) {
             lexer.nextToken(JSONToken.COMMA);
             if (object == null) {
-                fieldValues.put(fieldInfo.getName(), Boolean.TRUE);
+                fieldValues.put(fieldInfo.name, Boolean.TRUE);
             } else {
                 setValue(object, true);
             }
@@ -36,7 +36,7 @@ public class BooleanFieldDeserializer extends FieldDeserializer {
             lexer.nextToken(JSONToken.COMMA);
             boolean booleanValue = val == 1;
             if (object == null) {
-                fieldValues.put(fieldInfo.getName(), booleanValue);
+                fieldValues.put(fieldInfo.name, booleanValue);
             } else {
                 setValue(object, booleanValue);
             }
@@ -47,7 +47,7 @@ public class BooleanFieldDeserializer extends FieldDeserializer {
             value = null;
             lexer.nextToken(JSONToken.COMMA);
 
-            if (getFieldClass() == boolean.class) {
+            if (fieldInfo.fieldClass == boolean.class) {
                 // skip
                 return;
             }
@@ -61,7 +61,7 @@ public class BooleanFieldDeserializer extends FieldDeserializer {
         if (lexer.token() == JSONToken.FALSE) {
             lexer.nextToken(JSONToken.COMMA);
             if (object == null) {
-                fieldValues.put(fieldInfo.getName(), Boolean.FALSE);
+                fieldValues.put(fieldInfo.name, Boolean.FALSE);
             } else {
                 setValue(object, false);
             }
@@ -72,13 +72,13 @@ public class BooleanFieldDeserializer extends FieldDeserializer {
 
         value = TypeUtils.castToBoolean(obj);
 
-        if (value == null && getFieldClass() == boolean.class) {
+        if (value == null && fieldInfo.fieldClass == boolean.class) {
             // skip
             return;
         }
 
         if (object == null) {
-            fieldValues.put(fieldInfo.getName(), value);
+            fieldValues.put(fieldInfo.name, value);
         } else {
             setValue(object, value);
         }

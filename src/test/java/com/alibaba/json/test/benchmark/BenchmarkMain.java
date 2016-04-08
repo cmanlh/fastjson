@@ -1,16 +1,19 @@
 package com.alibaba.json.test.benchmark;
 
-import com.alibaba.json.test.benchmark.decode.EishayDecode;
-import com.alibaba.json.test.codec.FastjsonBeanToArrayCodec;
+import com.alibaba.json.test.benchmark.decode.*;
+import com.alibaba.json.test.benchmark.encode.*;
+import com.alibaba.json.test.codec.*;
 
 public class BenchmarkMain {
 	public static void main(String[] args) throws Exception {
 	     // 注意，byte[]在jackson中是使用base64编码的，不正确的。
 
         BenchmarkExecutor executor = new BenchmarkExecutor();
-        executor.setExecuteCount(5);
-//        executor.getCodecList().add(new FastjsonCodec());
-        executor.getCodecList().add(new FastjsonBeanToArrayCodec());
+        executor.setExecuteCount(3);
+//        executor.getCodecList().add(new FastjsonManualCodec());
+        executor.getCodecList().add(new FastjsonCodec());
+//        executor.getCodecList().add(new FastjsonGenCodec());
+//        executor.getCodecList().add(new FastjsonBeanToArrayCodec());
 //        executor.getCodecList().add(new JacksonCodec());
 //        executor.getCodecList().add(new Jackson2Codec());
         //
@@ -20,12 +23,13 @@ public class BenchmarkMain {
 
         executor.setLoopCount(1000 * 1000 * 1);
 
+//        executor.getCaseList().add(new TradeObjectParse());
 //        executor.getCaseList().add(new EishayDecodeBytes());
 //        executor.getCaseList().add(new EishayDecode2Bytes());
-         executor.getCaseList().add(new EishayDecode());
+//         executor.getCaseList().add(new EishayDecode());
 //         executor.getCaseList().add(new EishayDecodeByClassName());
 //         executor.getCaseList().add(new EishayTreeDecode());
-//         executor.getCaseList().add(new EishayEncode());
+         executor.getCaseList().add(new EishayEncode());
 //         executor.getCaseList().add(new EishayEncodeManual());
         // executor.getCaseList().add(new IntArray1000Decode());
         // executor.getCaseList().add(new StringArray1000Decode());

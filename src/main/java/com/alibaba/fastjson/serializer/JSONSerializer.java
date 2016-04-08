@@ -34,14 +34,15 @@ public class JSONSerializer {
 
     private final SerializeConfig                  config;
 
-    private final SerializeWriter                  out;
+    public final SerializeWriter                  out;
 
-    private List<BeforeFilter>                     beforeFilters      = null;
-    private List<AfterFilter>                      afterFilters       = null;
-    private List<PropertyFilter>                   propertyFilters    = null;
-    private List<ValueFilter>                      valueFilters       = null;
-    private List<NameFilter>                       nameFilters        = null;
-    private List<PropertyPreFilter>                propertyPreFilters = null;
+    protected List<BeforeFilter>                   beforeFilters      = null;
+    protected List<AfterFilter>                    afterFilters       = null;
+    protected List<PropertyFilter>                 propertyFilters    = null;
+    protected List<ValueFilter>                    valueFilters       = null;
+    protected List<NameFilter>                     nameFilters        = null;
+    protected List<PropertyPreFilter>              propertyPreFilters = null;
+    protected List<LabelFilter>                    labelFilters       = null;
 
     private int                                    indentCount        = 0;
     private String                                 indent             = "\t";
@@ -50,7 +51,7 @@ public class JSONSerializer {
     private DateFormat                             dateFormat;
 
     private IdentityHashMap<Object, SerialContext> references         = null;
-    private SerialContext                          context;
+    protected SerialContext                        context;
 
     public JSONSerializer(){
         this(new SerializeWriter(), SerializeConfig.getGlobalInstance());
@@ -62,11 +63,6 @@ public class JSONSerializer {
 
     public JSONSerializer(SerializeConfig config){
         this(new SerializeWriter(), config);
-    }
-
-    @Deprecated
-    public JSONSerializer(JSONSerializerMap mapping){
-        this(new SerializeWriter(), mapping);
     }
 
     public JSONSerializer(SerializeWriter out, SerializeConfig config){
@@ -118,7 +114,7 @@ public class JSONSerializer {
     }
     
     public void setContext(SerialContext parent, Object object, Object fieldName, int features, int fieldFeatures) {
-        if (isEnabled(SerializerFeature.DisableCircularReferenceDetect)) {
+        if (out.disableCircularReferenceDetect) {
             return;
         }
 
@@ -135,27 +131,15 @@ public class JSONSerializer {
 
     public void popContext() {
         if (context != null) {
-            this.context = this.context.getParent();
+            this.context = this.context.parent;
         }
     }
-
+    
     public final boolean isWriteClassName(Type fieldType, Object obj) {
-        boolean result = out.isEnabled(SerializerFeature.WriteClassName);
-
-        if (!result) {
-            return false;
-        }
-
-        if (fieldType == null) {
-            if (this.isEnabled(SerializerFeature.NotWriteRootClassName)) {
-                boolean isRoot = context.getParent() == null;
-                if (isRoot) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        return out.isEnabled(SerializerFeature.WriteClassName) //
+               && (fieldType != null //
+                   || (!out.isEnabled(SerializerFeature.NotWriteRootClassName)) //
+                   || context.parent != null);
     }
 
     public SerialContext getSerialContext(Object object) {
@@ -167,26 +151,22 @@ public class JSONSerializer {
     }
 
     public boolean containsReference(Object value) {
-        if (references == null) {
-            return false;
-        }
-
-        return references.containsKey(value);
+        return references != null && references.containsKey(value);
     }
 
     public void writeReference(Object object) {
-        SerialContext context = this.getContext();
-        Object current = context.getObject();
+        SerialContext context = this.context;
+        Object current = context.object;
 
         if (object == current) {
             out.write("{\"$ref\":\"@\"}");
             return;
         }
 
-        SerialContext parentContext = context.getParent();
+        SerialContext parentContext = context.parent;
 
         if (parentContext != null) {
-            if (object == parentContext.getObject()) {
+            if (object == parentContext.object) {
                 out.write("{\"$ref\":\"..\"}");
                 return;
             }
@@ -194,20 +174,20 @@ public class JSONSerializer {
 
         SerialContext rootContext = context;
         for (;;) {
-            if (rootContext.getParent() == null) {
+            if (rootContext.parent == null) {
                 break;
             }
-            rootContext = rootContext.getParent();
+            rootContext = rootContext.parent;
         }
 
-        if (object == rootContext.getObject()) {
+        if (object == rootContext.object) {
             out.write("{\"$ref\":\"$\"}");
             return;
         }
 
         SerialContext refContext = this.getSerialContext(object);
 
-        String path = refContext.getPath();
+        String path = refContext.toString();
 
         out.write("{\"$ref\":\"");
         out.write(path);
@@ -220,10 +200,6 @@ public class JSONSerializer {
             valueFilters = new ArrayList<ValueFilter>();
         }
 
-        return valueFilters;
-    }
-
-    public List<ValueFilter> getValueFiltersDirect() {
         return valueFilters;
     }
 
@@ -253,20 +229,12 @@ public class JSONSerializer {
 
         return beforeFilters;
     }
-
-    public List<BeforeFilter> getBeforeFiltersDirect() {
-        return beforeFilters;
-    }
     
     public List<AfterFilter> getAfterFilters() {
         if (afterFilters == null) {
             afterFilters = new ArrayList<AfterFilter>();
         }
 
-        return afterFilters;
-    }
-
-    public List<AfterFilter> getAfterFiltersDirect() {
         return afterFilters;
     }
 
@@ -278,10 +246,6 @@ public class JSONSerializer {
         return nameFilters;
     }
 
-    public List<NameFilter> getNameFiltersDirect() {
-        return nameFilters;
-    }
-
     public List<PropertyPreFilter> getPropertyPreFilters() {
         if (propertyPreFilters == null) {
             propertyPreFilters = new ArrayList<PropertyPreFilter>();
@@ -289,9 +253,13 @@ public class JSONSerializer {
 
         return propertyPreFilters;
     }
-
-    public List<PropertyPreFilter> getPropertyPreFiltersDirect() {
-        return propertyPreFilters;
+    
+    public List<LabelFilter> getLabelFilters() {
+        if (labelFilters == null) {
+            labelFilters = new ArrayList<LabelFilter>();
+        }
+        
+        return labelFilters;
     }
 
     public List<PropertyFilter> getPropertyFilters() {
@@ -299,10 +267,6 @@ public class JSONSerializer {
             propertyFilters = new ArrayList<PropertyFilter>();
         }
 
-        return propertyFilters;
-    }
-
-    public List<PropertyFilter> getPropertyFiltersDirect() {
         return propertyFilters;
     }
 
@@ -330,7 +294,7 @@ public class JSONSerializer {
         return config;
     }
 
-    public static final void write(Writer out, Object object) {
+    public static void write(Writer out, Object object) {
         SerializeWriter writer = new SerializeWriter();
         try {
             JSONSerializer serializer = new JSONSerializer(writer);
@@ -343,7 +307,7 @@ public class JSONSerializer {
         }
     }
 
-    public static final void write(SerializeWriter out, Object object) {
+    public static void write(SerializeWriter out, Object object) {
         JSONSerializer serializer = new JSONSerializer(out);
         serializer.write(object);
     }
@@ -353,7 +317,7 @@ public class JSONSerializer {
             out.writeNull();
             return;
         }
-
+        
         Class<?> clazz = object.getClass();
         ObjectSerializer writer = getObjectWriter(clazz);
 

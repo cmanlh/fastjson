@@ -29,9 +29,13 @@ public enum SerializerFeature {
      */
     WriteMapNullValue,
     /**
-     * 
+     * 用枚举toString()值输出
      */
     WriteEnumUsingToString,
+    /**
+     * 用枚举name()输出
+     */
+    WriteEnumUsingName,
     /**
      * 
      */
@@ -117,34 +121,49 @@ public enum SerializerFeature {
     /**
      * @since 1.1.42
      */
-    NotWriteDefaultValue
+    NotWriteDefaultValue,
+    
+    /**
+     * @since 1.2.6
+     */
+    BrowserSecure,
+    
+    /**
+     * @since 1.2.7
+     */
+    IgnoreNonFieldGetter,
+    
+    /**
+     * @since 1.2.9
+     */
+    WriteNonStringValueAsString
     ;
 
-    private SerializerFeature(){
+    SerializerFeature(){
         mask = (1 << ordinal());
     }
 
-    private final int mask;
+    public final int mask;
 
     public final int getMask() {
         return mask;
     }
 
     public static boolean isEnabled(int features, SerializerFeature feature) {
-        return (features & feature.getMask()) != 0;
+        return (features & feature.mask) != 0;
     }
     
     public static boolean isEnabled(int features, int fieaturesB, SerializerFeature feature) {
-        int mask = feature.getMask();
+        int mask = feature.mask;
         
         return (features & mask) != 0 || (fieaturesB & mask) != 0;
     }
 
     public static int config(int features, SerializerFeature feature, boolean state) {
         if (state) {
-            features |= feature.getMask();
+            features |= feature.mask;
         } else {
-            features &= ~feature.getMask();
+            features &= ~feature.mask;
         }
 
         return features;
@@ -158,7 +177,7 @@ public enum SerializerFeature {
         int value = 0;
         
         for (SerializerFeature feature: features) {
-            value |= feature.getMask();
+            value |= feature.mask;
         }
         
         return value;

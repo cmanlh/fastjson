@@ -3,6 +3,8 @@ package com.alibaba.fastjson.serializer;
 import static com.alibaba.fastjson.util.ASMUtils.getDesc;
 import static com.alibaba.fastjson.util.ASMUtils.getType;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
@@ -19,9 +21,10 @@ import com.alibaba.fastjson.JSONException;
 import com.alibaba.fastjson.annotation.JSONField;
 import com.alibaba.fastjson.annotation.JSONType;
 import com.alibaba.fastjson.asm.ClassWriter;
-import com.alibaba.fastjson.asm.FieldVisitor;
+import com.alibaba.fastjson.asm.FieldWriter;
 import com.alibaba.fastjson.asm.Label;
 import com.alibaba.fastjson.asm.MethodVisitor;
+import com.alibaba.fastjson.asm.MethodWriter;
 import com.alibaba.fastjson.asm.Opcodes;
 import com.alibaba.fastjson.util.ASMClassLoader;
 import com.alibaba.fastjson.util.ASMUtils;
@@ -30,17 +33,9 @@ import com.alibaba.fastjson.util.TypeUtils;
 
 public class ASMSerializerFactory implements Opcodes {
 
-    private ASMClassLoader classLoader = new ASMClassLoader();
+    protected final ASMClassLoader classLoader = new ASMClassLoader();
 
     private final AtomicLong seed = new AtomicLong();
-
-    public String getGenClassName(Class<?> clazz) {
-        return "Serializer_" + seed.incrementAndGet();
-    }
-
-    public boolean isExternalClass(Class<?> clazz) {
-        return classLoader.isExternalClass(clazz);
-    }
 
     static class Context {
 
@@ -52,49 +47,17 @@ public class ASMSerializerFactory implements Opcodes {
             this.beanSerializeFeatures = beanSerializeFeatures;
         }
 
-        private int                  variantIndex = 9;
+        private Map<String, Integer> variants       = new HashMap<String, Integer>();
 
-        private Map<String, Integer> variants     = new HashMap<String, Integer>();
-
-        public int serializer() {
-            return 1;
-        }
-
-        public String getClassName() {
-            return className;
-        }
-
-        public int obj() {
-            return 2;
-        }
-
-        public int paramFieldName() {
-            return 3;
-        }
-
-        public int paramFieldType() {
-            return 4;
-        }
-        
-        public int features() {
-            return 5;
-        }
-
-        public int fieldName() {
-            return 6;
-        }
-
-        public int original() {
-            return 7;
-        }
-
-        public int processValue() {
-            return 8;
-        }
-
-        public int getVariantCount() {
-            return variantIndex;
-        }
+        static final int             serializer     = 1;
+        static final int             obj            = 2;
+        static final int             paramFieldName = 3;
+        static final int             paramFieldType = 4;
+        static final int             features       = 5;
+        static int                   fieldName      = 6;
+        static int                   original       = 7;
+        static int                   processValue   = 8;
+        private int                  variantIndex   = 9;
 
         public int var(String name) {
             Integer i = variants.get(name);
@@ -120,8 +83,23 @@ public class ASMSerializerFactory implements Opcodes {
         if (clazz.isPrimitive()) {
             throw new JSONException("unsupportd class " + clazz.getName());
         }
-
-        List<FieldInfo> getters = TypeUtils.computeGetters(clazz, aliasMap, false);
+        
+        JSONType jsonType = clazz.getAnnotation(JSONType.class);
+        
+        List<FieldInfo> unsortedGetters = TypeUtils.computeGetters(clazz, jsonType, aliasMap, false);
+        List<FieldInfo> getters = TypeUtils.computeGetters(clazz, jsonType, aliasMap, true);
+        
+        boolean nativeSorted = true;
+        for (int i = 0, size = unsortedGetters.size(); i < size; ++i) {
+            if (!unsortedGetters.get(i).equals(getters.get(i))) {
+                nativeSorted = false;
+                break;
+            }
+        }
+        
+        if (getters.size() > 256) {
+            return null;
+        }
         
         for (FieldInfo getter : getters) {
             if (!ASMUtils.checkName(getter.getMember().getName())) {
@@ -129,49 +107,62 @@ public class ASMSerializerFactory implements Opcodes {
             }
         }
 
-        String className = getGenClassName(clazz);
+        String className = "ASMSerializer_" + seed.incrementAndGet() + "_" + clazz.getSimpleName();
+        String classNameType = "com/alibaba/fastjson/serializer/" + className;
+        String classNameFull = "com.alibaba.fastjson.serializer." + className;
         int beanSerializeFeatures = TypeUtils.getSerializeFeatures(clazz);
 
         ClassWriter cw = new ClassWriter();
-        cw.visit(V1_5, ACC_PUBLIC + ACC_SUPER, className, "com/alibaba/fastjson/serializer/ASMJavaBeanSerializer",
-                 new String[] { "com/alibaba/fastjson/serializer/ObjectSerializer" });
+        cw.visit(V1_5 //
+                 , ACC_PUBLIC + ACC_SUPER //
+                 , classNameType //
+                 , "com/alibaba/fastjson/serializer/ASMJavaBeanSerializer" //
+                 , new String[] { "com/alibaba/fastjson/serializer/ObjectSerializer" } //
+        );
 
         for (FieldInfo fieldInfo : getters) {
-            {
-                FieldVisitor fw = cw.visitField(ACC_PUBLIC, fieldInfo.getName() + "_asm_fieldPrefix",
-                                                "Ljava/lang/reflect/Type;");
-                fw.visitEnd();
+            if (fieldInfo.fieldClass.isPrimitive() //
+                || fieldInfo.fieldClass.isEnum() //
+                || fieldInfo.fieldClass == String.class) {
+                continue;
             }
-
-            FieldVisitor fw = cw.visitField(ACC_PUBLIC, fieldInfo.getName() + "_asm_fieldType",
-                                            "Ljava/lang/reflect/Type;");
+            
+            FieldWriter fw = new FieldWriter(cw //
+                                             , ACC_PUBLIC //
+                                             , fieldInfo.name + "_asm_fieldType" //
+                                             , "Ljava/lang/reflect/Type;");
             fw.visitEnd();
         }
 
-        MethodVisitor mw = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+        MethodVisitor mw = new MethodWriter(cw, ACC_PUBLIC, "<init>", "()V", null, null);
         mw.visitVarInsn(ALOAD, 0);
         mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc(clazz)));
         mw.visitMethodInsn(INVOKESPECIAL, "com/alibaba/fastjson/serializer/ASMJavaBeanSerializer", "<init>", "(Ljava/lang/Class;)V");
 
-        // mw.visitFieldInsn(PUTFIELD, context.getClassName(), fieldInfo.getName() + "_asm_prefix__", "[C");
-
+        // init _asm_fieldType
         for (FieldInfo fieldInfo : getters) {
+            if (fieldInfo.fieldClass.isPrimitive() //
+                || fieldInfo.fieldClass.isEnum() //
+                || fieldInfo.fieldClass == String.class) {
+                continue;
+            }
+            
             mw.visitVarInsn(ALOAD, 0);
 
-            mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc(fieldInfo.getDeclaringClass())));
+            mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc(fieldInfo.declaringClass)));
 
-            if (fieldInfo.getMethod() != null) {
-                mw.visitLdcInsn(fieldInfo.getMethod().getName());
+            if (fieldInfo.method != null) {
+                mw.visitLdcInsn(fieldInfo.method.getName());
                 mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/util/ASMUtils", "getMethodType",
                                    "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Type;");
 
             } else {
-                mw.visitLdcInsn(fieldInfo.getField().getName());
+                mw.visitLdcInsn(fieldInfo.field.getName());
                 mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/util/ASMUtils", "getFieldType",
                                    "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Type;");
             }
 
-            mw.visitFieldInsn(PUTFIELD, className, fieldInfo.getName() + "_asm_fieldType", "Ljava/lang/reflect/Type;");
+            mw.visitFieldInsn(PUTFIELD, classNameType, fieldInfo.name + "_asm_fieldType", "Ljava/lang/reflect/Type;");
         }
 
         mw.visitInsn(RETURN);
@@ -179,109 +170,116 @@ public class ASMSerializerFactory implements Opcodes {
         mw.visitEnd();
 
         {
-            Context context = new Context(className, beanSerializeFeatures);
+            Context context = new Context(classNameType, beanSerializeFeatures);
 
-            mw = cw.visitMethod(ACC_PUBLIC,
+            mw = new MethodWriter(cw, ACC_PUBLIC,
                                 "write",
                                 "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V",
                                 null, new String[] { "java/io/IOException" });
 
-            mw.visitVarInsn(ALOAD, context.serializer()); // serializer
+            mw.visitVarInsn(ALOAD, Context.serializer); // serializer
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "getWriter",
                                "()Lcom/alibaba/fastjson/serializer/SerializeWriter;");
             mw.visitVarInsn(ASTORE, context.var("out"));
 
-            JSONType jsonType = clazz.getAnnotation(JSONType.class);
-
-            if (jsonType == null || jsonType.alphabetic()) {
-                Label _else = new Label();
-
-                mw.visitVarInsn(ALOAD, context.var("out"));
-                mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "SortField",
-                                  "Lcom/alibaba/fastjson/serializer/SerializerFeature;");
-                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-                                   "(Lcom/alibaba/fastjson/serializer/SerializerFeature;)Z");
-
-                mw.visitJumpInsn(IFEQ, _else);
-                mw.visitVarInsn(ALOAD, 0);
-                mw.visitVarInsn(ALOAD, 1);
-                mw.visitVarInsn(ALOAD, 2);
-                mw.visitVarInsn(ALOAD, 3);
-                mw.visitVarInsn(ALOAD, 4);
-                mw.visitVarInsn(ILOAD, 5);
-                mw.visitMethodInsn(INVOKEVIRTUAL, className, "write1",
-                                   "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
-                mw.visitInsn(RETURN);
-
-                mw.visitLabel(_else);
+            if (!nativeSorted) {
+                if (jsonType == null || jsonType.alphabetic()) {
+                    Label _else = new Label();
+    
+                    mw.visitVarInsn(ALOAD, context.var("out"));
+                    mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isSortField",
+                                       "()Z");
+    
+                    mw.visitJumpInsn(IFNE, _else);
+                    mw.visitVarInsn(ALOAD, 0);
+                    mw.visitVarInsn(ALOAD, 1);
+                    mw.visitVarInsn(ALOAD, 2);
+                    mw.visitVarInsn(ALOAD, 3);
+                    mw.visitVarInsn(ALOAD, 4);
+                    mw.visitVarInsn(ILOAD, 5);
+                    mw.visitMethodInsn(INVOKEVIRTUAL, classNameType, "writeUnsorted",
+                                       "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
+                    mw.visitInsn(RETURN);
+    
+                    mw.visitLabel(_else);
+                }
             }
 
-            mw.visitVarInsn(ALOAD, context.obj()); // obj
+            mw.visitVarInsn(ALOAD, Context.obj); // obj
             mw.visitTypeInsn(CHECKCAST, getType(clazz)); // serializer
             mw.visitVarInsn(ASTORE, context.var("entity")); // obj
             generateWriteMethod(clazz, mw, getters, context);
             mw.visitInsn(RETURN);
-            mw.visitMaxs(6, context.getVariantCount() + 1);
+            mw.visitMaxs(6, context.variantIndex + 1);
             mw.visitEnd();
         }
 
-        List<FieldInfo> sortedGetters = TypeUtils.computeGetters(clazz, aliasMap, true);
-        {
-
+        if (!nativeSorted) {
             // sortField support
-            Context context = new Context(className, beanSerializeFeatures);
+            Context context = new Context(classNameType, beanSerializeFeatures);
 
-            mw = cw.visitMethod(ACC_PUBLIC,
-                                "write1",
+            mw = new MethodWriter(cw, ACC_PUBLIC,
+                                "writeUnsorted",
                                 "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V",
                                 null, new String[] { "java/io/IOException" });
 
-            mw.visitVarInsn(ALOAD, context.serializer()); // serializer
+            mw.visitVarInsn(ALOAD, Context.serializer); // serializer
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "getWriter",
                                "()Lcom/alibaba/fastjson/serializer/SerializeWriter;");
             mw.visitVarInsn(ASTORE, context.var("out"));
 
-            mw.visitVarInsn(ALOAD, context.obj()); // obj
+            mw.visitVarInsn(ALOAD, Context.obj); // obj
             mw.visitTypeInsn(CHECKCAST, getType(clazz)); // serializer
             mw.visitVarInsn(ASTORE, context.var("entity")); // obj
 
-            generateWriteMethod(clazz, mw, sortedGetters, context);
+            generateWriteMethod(clazz, mw, unsortedGetters, context);
 
             mw.visitInsn(RETURN);
-            mw.visitMaxs(6, context.getVariantCount() + 1);
+            mw.visitMaxs(6, context.variantIndex + 1);
             mw.visitEnd();
         }
 
         // writeAsArray
         {
-            Context context = new Context(className, beanSerializeFeatures);
+            Context context = new Context(classNameType, beanSerializeFeatures);
 
-            mw = cw.visitMethod(ACC_PUBLIC,
+            mw = new MethodWriter(cw, ACC_PUBLIC,
                                 "writeAsArray",
                                 "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;)V",
                                 null, new String[] { "java/io/IOException" });
 
-            mw.visitVarInsn(ALOAD, context.serializer()); // serializer
+            mw.visitVarInsn(ALOAD, Context.serializer); // serializer
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "getWriter",
                                "()Lcom/alibaba/fastjson/serializer/SerializeWriter;");
             mw.visitVarInsn(ASTORE, context.var("out"));
 
-            mw.visitVarInsn(ALOAD, context.obj()); // obj
+            mw.visitVarInsn(ALOAD, Context.obj); // obj
             mw.visitTypeInsn(CHECKCAST, getType(clazz)); // serializer
             mw.visitVarInsn(ASTORE, context.var("entity")); // obj
-            generateWriteAsArray(clazz, mw, sortedGetters, context);
+            generateWriteAsArray(clazz, mw, getters, context);
             mw.visitInsn(RETURN);
-            mw.visitMaxs(6, context.getVariantCount() + 1);
+            mw.visitMaxs(6, context.variantIndex + 1);
             mw.visitEnd();
         }
 
         byte[] code = cw.toByteArray();
-        //
-        // org.apache.commons.io.IOUtils.write(code, new java.io.FileOutputStream(
-        // "/usr/alibaba/workspace-3.7/fastjson-asm/target/classes/"
-        // + className + ".class"));
 
-        Class<?> exampleClass = classLoader.defineClassPublic(className, code, 0, code.length);
+        if(JSON.DUMP_CLASS != null){
+            FileOutputStream fos=null;
+            try {
+                fos=new FileOutputStream(JSON.DUMP_CLASS+ File.separator
+                        + classNameType + ".class");
+                fos.write(code);
+            }catch (Exception ex){
+                System.err.println("FASTJSON dump class:"+classNameType+"失败:"+ex.getMessage());
+            }finally {
+                if(fos!=null){
+                    fos.close();
+                }
+            }
+        }
+
+        Class<?> exampleClass = classLoader.defineClassPublic(classNameFull, code, 0, code.length);
         Object instance = exampleClass.newInstance();
 
         return (ObjectSerializer) instance;
@@ -292,14 +290,14 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(BIPUSH, '[');
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
         int size = getters.size();
 
         if (size == 0) {
             mw.visitVarInsn(ALOAD, context.var("out"));
             mw.visitVarInsn(BIPUSH, ']');
-            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
             return;
         }
 
@@ -307,10 +305,10 @@ public class ASMSerializerFactory implements Opcodes {
             final char seperator = (i == size - 1) ? ']' : ',';
 
             FieldInfo property = getters.get(i);
-            Class<?> propertyClass = property.getFieldClass();
+            Class<?> propertyClass = property.fieldClass;
 
-            mw.visitLdcInsn(property.getName());
-            mw.visitVarInsn(ASTORE, context.fieldName());
+            mw.visitLdcInsn(property.name);
+            mw.visitVarInsn(ASTORE, Context.fieldName);
 
             if (propertyClass == byte.class //
                 || propertyClass == short.class //
@@ -364,23 +362,23 @@ public class ASMSerializerFactory implements Opcodes {
             } else {
                 String format = property.getFormat();
 
-                mw.visitVarInsn(ALOAD, context.serializer());
+                mw.visitVarInsn(ALOAD, Context.serializer);
                 _get(mw, context, property);
                 if (format != null) {
                     mw.visitLdcInsn(format);
                     mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFormat",
                                        "(Ljava/lang/Object;Ljava/lang/String;)V");
                 } else {
-                    mw.visitVarInsn(ALOAD, context.fieldName());
-                    if (property.getFieldType() instanceof Class<?> //
-                        && ((Class<?>) property.getFieldType()).isPrimitive()) {
+                    mw.visitVarInsn(ALOAD, Context.fieldName);
+                    if (property.fieldType instanceof Class<?> //
+                        && ((Class<?>) property.fieldType).isPrimitive()) {
                         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                            "(Ljava/lang/Object;Ljava/lang/Object;)V");
                     } else {
                         mw.visitVarInsn(ALOAD, 0);
-                        mw.visitFieldInsn(GETFIELD, context.getClassName(), property.getName() + "_asm_fieldType",
+                        mw.visitFieldInsn(GETFIELD, context.className, property.name + "_asm_fieldType",
                                           "Ljava/lang/reflect/Type;");
-                        mw.visitLdcInsn(property.getSerialzeFeatures());
+                        mw.visitLdcInsn(property.serialzeFeatures);
 
                         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                            "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
@@ -389,7 +387,7 @@ public class ASMSerializerFactory implements Opcodes {
 
                 mw.visitVarInsn(ALOAD, context.var("out"));
                 mw.visitVarInsn(BIPUSH, seperator);
-                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
             }
         }
     }
@@ -405,21 +403,19 @@ public class ASMSerializerFactory implements Opcodes {
             Label endFormat_ = new Label();
             Label notNull_ = new Label();
             mw.visitVarInsn(ALOAD, context.var("out"));
-            mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "PrettyFormat",
-                              "Lcom/alibaba/fastjson/serializer/SerializerFeature;");
-            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-                               "(Lcom/alibaba/fastjson/serializer/SerializerFeature;)Z");
+            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isPrettyFormat",
+                               "()Z");
             mw.visitJumpInsn(IFEQ, endFormat_);
 
             mw.visitVarInsn(ALOAD, 0);
-            mw.visitFieldInsn(GETFIELD, context.getClassName(), "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
+            mw.visitFieldInsn(GETFIELD, context.className, "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
             mw.visitJumpInsn(IFNONNULL, notNull_);
 
             // /////
             mw.visitLabel(notNull_);
 
             mw.visitVarInsn(ALOAD, 0);
-            mw.visitFieldInsn(GETFIELD, context.getClassName(), "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
+            mw.visitFieldInsn(GETFIELD, context.className, "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
             mw.visitVarInsn(ALOAD, 1);
             mw.visitVarInsn(ALOAD, 2);
             mw.visitVarInsn(ALOAD, 3);
@@ -439,16 +435,16 @@ public class ASMSerializerFactory implements Opcodes {
             Label notNull_ = new Label();
 
             mw.visitVarInsn(ALOAD, 0);
-            mw.visitFieldInsn(GETFIELD, context.getClassName(), "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
+            mw.visitFieldInsn(GETFIELD, context.className, "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
             mw.visitJumpInsn(IFNONNULL, notNull_);
 
             // /////
             mw.visitLabel(notNull_);
             mw.visitVarInsn(ALOAD, 0);
-            mw.visitFieldInsn(GETFIELD, context.getClassName(), "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
-            mw.visitVarInsn(ALOAD, 1);
-            mw.visitVarInsn(ALOAD, 2);
-            mw.visitVarInsn(ILOAD, 5);
+            mw.visitFieldInsn(GETFIELD, context.className, "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
+            mw.visitVarInsn(ALOAD, Context.serializer);
+            mw.visitVarInsn(ALOAD, Context.obj);
+            mw.visitVarInsn(ILOAD, Context.features);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JavaBeanSerializer", "writeReference",
                                "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;I)Z");
             
@@ -463,8 +459,8 @@ public class ASMSerializerFactory implements Opcodes {
             Label endWriteAsArray_ = new Label();
 
             mw.visitVarInsn(ALOAD, 0);
-            mw.visitFieldInsn(GETFIELD, context.getClassName(), "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
-            mw.visitVarInsn(ALOAD, context.serializer());
+            mw.visitFieldInsn(GETFIELD, context.className, "nature", "Lcom/alibaba/fastjson/serializer/JavaBeanSerializer;");
+            mw.visitVarInsn(ALOAD, Context.serializer);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JavaBeanSerializer", "isWriteAsArray",
                                "(Lcom/alibaba/fastjson/serializer/JSONSerializer;)Z");
             mw.visitJumpInsn(IFEQ, endWriteAsArray_);
@@ -475,7 +471,7 @@ public class ASMSerializerFactory implements Opcodes {
             mw.visitVarInsn(ALOAD, 2); // obj
             mw.visitVarInsn(ALOAD, 3); // fieldObj
             mw.visitVarInsn(ALOAD, 4); // fieldType
-            mw.visitMethodInsn(INVOKEVIRTUAL, context.getClassName(), "writeAsArray",
+            mw.visitMethodInsn(INVOKEVIRTUAL, context.className, "writeAsArray",
                                "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;)V");
 
             mw.visitInsn(RETURN);
@@ -484,15 +480,15 @@ public class ASMSerializerFactory implements Opcodes {
         }
 
         {
-            mw.visitVarInsn(ALOAD, context.serializer());
+            mw.visitVarInsn(ALOAD, Context.serializer);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "getContext",
                                "()Lcom/alibaba/fastjson/serializer/SerialContext;");
             mw.visitVarInsn(ASTORE, context.var("parent"));
 
-            mw.visitVarInsn(ALOAD, context.serializer());
+            mw.visitVarInsn(ALOAD, Context.serializer);
             mw.visitVarInsn(ALOAD, context.var("parent"));
-            mw.visitVarInsn(ALOAD, context.obj());
-            mw.visitVarInsn(ALOAD, context.paramFieldName());
+            mw.visitVarInsn(ALOAD, Context.obj);
+            mw.visitVarInsn(ALOAD, Context.paramFieldName);
             mw.visitLdcInsn(context.beanSerializeFeatures);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "setContext",
                                "(Lcom/alibaba/fastjson/serializer/SerialContext;Ljava/lang/Object;Ljava/lang/Object;I)V");
@@ -504,26 +500,16 @@ public class ASMSerializerFactory implements Opcodes {
             Label else_ = new Label();
             Label writeClass_ = new Label();
 
-            // mw.visitVarInsn(ALOAD, context.var("out"));
-            // mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "WriteClassName",
-            // "L" + "com/alibaba/fastjson/serializer/SerializerFeature" + ";");
-            // mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-            // "(" + "L" + "com/alibaba/fastjson/serializer/SerializerFeature" + ";" + ")Z");
-            // mw.visitJumpInsn(IFEQ, else_);
-
-            mw.visitVarInsn(ALOAD, context.serializer());
-            mw.visitVarInsn(ALOAD, context.paramFieldType());
-            mw.visitVarInsn(ALOAD, context.obj());
+            mw.visitVarInsn(ALOAD, Context.serializer);
+            mw.visitVarInsn(ALOAD, Context.paramFieldType);
+            mw.visitVarInsn(ALOAD, Context.obj);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "isWriteClassName",
                                "(Ljava/lang/reflect/Type;Ljava/lang/Object;)Z");
             mw.visitJumpInsn(IFEQ, else_);
 
-            // mw.visitVarInsn(ALOAD, context.paramFieldType());
-            // mw.visitJumpInsn(IFNULL, writeClass_);
-
             // IFNULL
-            mw.visitVarInsn(ALOAD, context.paramFieldType());
-            mw.visitVarInsn(ALOAD, context.obj());
+            mw.visitVarInsn(ALOAD, Context.paramFieldType);
+            mw.visitVarInsn(ALOAD, Context.obj);
             mw.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Object", "getClass", "()Ljava/lang/Class;");
             mw.visitJumpInsn(IF_ACMPEQ, else_);
 
@@ -543,13 +529,18 @@ public class ASMSerializerFactory implements Opcodes {
         mw.visitVarInsn(ISTORE, context.var("seperator"));
 
         _before(mw, context);
+        
+        mw.visitVarInsn(ALOAD, context.var("out"));
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isNotWriteDefaultValue",
+                           "()Z");
+        mw.visitVarInsn(ISTORE, context.var("notWriteDefaultValue"));
 
         for (int i = 0; i < size; ++i) {
             FieldInfo property = getters.get(i);
-            Class<?> propertyClass = property.getFieldClass();
+            Class<?> propertyClass = property.fieldClass;
 
-            mw.visitLdcInsn(property.getName());
-            mw.visitVarInsn(ASTORE, context.fieldName());
+            mw.visitLdcInsn(property.name);
+            mw.visitVarInsn(ASTORE, Context.fieldName);
 
             if (propertyClass == byte.class) {
                 _byte(clazz, mw, property, context);
@@ -592,18 +583,18 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(BIPUSH, '{');
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
         mw.visitLabel(_else);
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(BIPUSH, '}');
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
         mw.visitLabel(_end_if);
         mw.visitLabel(end);
 
-        mw.visitVarInsn(ALOAD, context.serializer());
+        mw.visitVarInsn(ALOAD, Context.serializer);
         mw.visitVarInsn(ALOAD, context.var("parent"));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "setContext",
                            "(Lcom/alibaba/fastjson/serializer/SerialContext;)V");
@@ -626,7 +617,7 @@ public class ASMSerializerFactory implements Opcodes {
 
     private void _enum(Class<?> clazz, MethodVisitor mw, FieldInfo property, Context context) {
         boolean writeEnumUsingToString = false;
-        JSONField annotation = property.getAnnotation(JSONField.class);
+        JSONField annotation = property.getAnnotation();
         if (annotation != null) {
             for (SerializerFeature feature : annotation.serialzeFeatures()) {
                 if (feature == SerializerFeature.WriteEnumUsingToString) {
@@ -654,7 +645,7 @@ public class ASMSerializerFactory implements Opcodes {
         mw.visitLabel(_not_null);
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ALOAD, context.var("enum"));
 
         if (writeEnumUsingToString) {
@@ -684,7 +675,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(LLOAD, context.var("long", 2));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;J)V");
 
@@ -704,7 +695,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(FLOAD, context.var("float"));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;F)V");
 
@@ -724,7 +715,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(DLOAD, context.var("double", 2));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;D)V");
 
@@ -744,7 +735,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ILOAD, context.var("char"));
 
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;C)V");
@@ -765,7 +756,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ILOAD, context.var("boolean"));
 
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;Z)V");
@@ -776,14 +767,14 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _get(MethodVisitor mw, Context context, FieldInfo property) {
-        Method method = property.getMethod();
+        Method method = property.method;
         if (method != null) {
             mw.visitVarInsn(ALOAD, context.var("entity"));
             mw.visitMethodInsn(INVOKEVIRTUAL, getType(method.getDeclaringClass()), method.getName(), getDesc(method));
         } else {
             mw.visitVarInsn(ALOAD, context.var("entity"));
-            mw.visitFieldInsn(GETFIELD, getType(property.getDeclaringClass()), property.getField().getName(),
-                              getDesc(property.getFieldClass()));
+            mw.visitFieldInsn(GETFIELD, getType(property.declaringClass), property.field.getName(),
+                              getDesc(property.fieldClass));
         }
     }
 
@@ -798,7 +789,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ILOAD, context.var("byte"));
 
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;I)V");
@@ -819,7 +810,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ILOAD, context.var("short"));
 
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;I)V");
@@ -840,7 +831,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ILOAD, context.var("int"));
 
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue", "(CLjava/lang/String;I)V");
@@ -875,7 +866,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ALOAD, context.var("decimal"));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue",
                            "(CLjava/lang/String;Ljava/math/BigDecimal;)V");
@@ -911,7 +902,7 @@ public class ASMSerializerFactory implements Opcodes {
         mw.visitLabel(_else); // else { out.writeFieldValue(seperator, fieldName, fieldValue)
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitVarInsn(ALOAD, context.var("string"));
         mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldValue",
                            "(CLjava/lang/String;Ljava/lang/String;)V");
@@ -924,7 +915,7 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _list(Class<?> clazz, MethodVisitor mw, FieldInfo property, Context context) {
-        Type propertyType = property.getFieldType();
+        Type propertyType = property.fieldType;
 
         Type elementType;
         if (propertyType instanceof Class) {
@@ -962,11 +953,12 @@ public class ASMSerializerFactory implements Opcodes {
 
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
         mw.visitVarInsn(ALOAD, context.var("out"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldName", "(Ljava/lang/String;)V");
+        mw.visitVarInsn(ALOAD, Context.fieldName);
+        mw.visitInsn(ICONST_0);
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldName", "(Ljava/lang/String;Z)V");
 
         //
         mw.visitVarInsn(ALOAD, context.var("list"));
@@ -992,9 +984,9 @@ public class ASMSerializerFactory implements Opcodes {
         mw.visitLabel(_else_3);
 
         {
-            mw.visitVarInsn(ALOAD, context.serializer());
+            mw.visitVarInsn(ALOAD, Context.serializer);
             mw.visitVarInsn(ALOAD, context.var("list"));
-            mw.visitVarInsn(ALOAD, context.fieldName());
+            mw.visitVarInsn(ALOAD, Context.fieldName);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "setContext",
                                "(Ljava/lang/Object;Ljava/lang/Object;)V");
         }
@@ -1002,7 +994,7 @@ public class ASMSerializerFactory implements Opcodes {
         {
             mw.visitVarInsn(ALOAD, context.var("out"));
             mw.visitVarInsn(BIPUSH, '[');
-            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
             // list_serializer = null
             mw.visitInsn(ACONST_NULL);
@@ -1036,7 +1028,7 @@ public class ASMSerializerFactory implements Opcodes {
                 mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeString",
                                    "(Ljava/lang/String;C)V");
             } else {
-                mw.visitVarInsn(ALOAD, context.serializer());
+                mw.visitVarInsn(ALOAD, Context.serializer);
                 mw.visitVarInsn(ALOAD, context.var("list"));
                 mw.visitVarInsn(ILOAD, context.var("i"));
                 mw.visitMethodInsn(INVOKEINTERFACE, "java/util/List", "get", "(I)Ljava/lang/Object;");
@@ -1045,7 +1037,7 @@ public class ASMSerializerFactory implements Opcodes {
 
                 if (elementClass != null && Modifier.isPublic(elementClass.getModifiers())) {
                     mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc((Class<?>) elementType)));
-                    mw.visitLdcInsn(property.getSerialzeFeatures());
+                    mw.visitLdcInsn(property.serialzeFeatures);
                     mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
                 } else {
@@ -1055,7 +1047,7 @@ public class ASMSerializerFactory implements Opcodes {
 
                 mw.visitVarInsn(ALOAD, context.var("out"));
                 mw.visitVarInsn(BIPUSH, ',');
-                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
             }
 
             mw.visitIincInsn(context.var("i"), 1);
@@ -1076,7 +1068,7 @@ public class ASMSerializerFactory implements Opcodes {
                 mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeString",
                                    "(Ljava/lang/String;C)V");
             } else {
-                mw.visitVarInsn(ALOAD, context.serializer());
+                mw.visitVarInsn(ALOAD, Context.serializer);
                 mw.visitVarInsn(ALOAD, context.var("list"));
                 mw.visitVarInsn(ILOAD, context.var("i"));
                 mw.visitMethodInsn(INVOKEINTERFACE, "java/util/List", "get", "(I)Ljava/lang/Object;");
@@ -1085,7 +1077,7 @@ public class ASMSerializerFactory implements Opcodes {
 
                 if (elementClass != null && Modifier.isPublic(elementClass.getModifiers())) {
                     mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc((Class<?>) elementType)));
-                    mw.visitLdcInsn(property.getSerialzeFeatures());
+                    mw.visitLdcInsn(property.serialzeFeatures);
                     mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
                 } else {
@@ -1095,12 +1087,12 @@ public class ASMSerializerFactory implements Opcodes {
 
                 mw.visitVarInsn(ALOAD, context.var("out"));
                 mw.visitVarInsn(BIPUSH, ']');
-                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
             }
         }
 
         {
-            mw.visitVarInsn(ALOAD, context.serializer());
+            mw.visitVarInsn(ALOAD, Context.serializer);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "popContext", "()V");
         }
 
@@ -1114,13 +1106,11 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _filters(MethodVisitor mw, FieldInfo property, Context context, Label _end) {
-        if (property.getField() != null) {
-            if (Modifier.isTransient(property.getField().getModifiers())) {
+        if (property.field != null) {
+            if (Modifier.isTransient(property.field.getModifiers())) {
                 mw.visitVarInsn(ALOAD, context.var("out"));
-                mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "SkipTransientField",
-                                  "Lcom/alibaba/fastjson/serializer/SerializerFeature;");
-                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-                                   "(Lcom/alibaba/fastjson/serializer/SerializerFeature;)Z");
+                mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isSkipTransientField",
+                                   "()Z");
 
                 // if true
                 mw.visitJumpInsn(IFNE, _end);
@@ -1137,8 +1127,8 @@ public class ASMSerializerFactory implements Opcodes {
         Label _else_processKey = new Label();
         _processValue(mw, property, context);
 
-        mw.visitVarInsn(ALOAD, context.original());
-        mw.visitVarInsn(ALOAD, context.processValue());
+        mw.visitVarInsn(ALOAD, Context.original);
+        mw.visitVarInsn(ALOAD, Context.processValue);
         mw.visitJumpInsn(IF_ACMPEQ, _else_processKey);
         _writeObject(mw, property, context, _end);
         mw.visitJumpInsn(GOTO, _end);
@@ -1147,11 +1137,31 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _nameApply(MethodVisitor mw, FieldInfo property, Context context, Label _end) {
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
+        mw.visitVarInsn(ALOAD, Context.fieldName);
         mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/serializer/FilterUtils", "applyName",
                            "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/String;)Z");
+        mw.visitJumpInsn(IFEQ, _end);
+        
+        _labelApply(mw, property, context, _end);
+        
+        if (property.field == null) {
+            mw.visitVarInsn(ALOAD, context.var("out"));
+            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isIgnoreNonFieldGetter",
+                               "()Z");
+
+            // if true
+            mw.visitJumpInsn(IFNE, _end);
+        }
+    }
+    
+    private void _labelApply(MethodVisitor mw, FieldInfo property, Context context, Label _end) {
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitLdcInsn(property.label);
+        
+        mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/serializer/FilterUtils", "applyLabel",
+                "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/String;)Z");
         mw.visitJumpInsn(IFEQ, _end);
     }
 
@@ -1160,7 +1170,7 @@ public class ASMSerializerFactory implements Opcodes {
 
         Label _not_null = new Label();
 
-        mw.visitVarInsn(ALOAD, context.processValue());
+        mw.visitVarInsn(ALOAD, Context.processValue);
         mw.visitJumpInsn(IFNONNULL, _not_null); // if (obj == null)
         _if_write_null(mw, fieldInfo, context);
         mw.visitJumpInsn(GOTO, _end);
@@ -1169,31 +1179,36 @@ public class ASMSerializerFactory implements Opcodes {
         // writeFieldNullNumber
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(C)V");
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "write", "(I)V");
 
         // out.writeFieldName("fieldName")
         mw.visitVarInsn(ALOAD, context.var("out"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldName", "(Ljava/lang/String;)V");
+        mw.visitVarInsn(ALOAD, Context.fieldName);
+        mw.visitInsn(ICONST_0);
+        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "writeFieldName", "(Ljava/lang/String;Z)V");
 
         // serializer.write(obj)
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.processValue());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.processValue);
         if (format != null) {
             mw.visitLdcInsn(format);
             mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFormat",
                                "(Ljava/lang/Object;Ljava/lang/String;)V");
         } else {
-            mw.visitVarInsn(ALOAD, context.fieldName());
-            if (fieldInfo.getFieldType() instanceof Class<?> //
-                && ((Class<?>) fieldInfo.getFieldType()).isPrimitive()) {
+            mw.visitVarInsn(ALOAD, Context.fieldName);
+            if (fieldInfo.fieldType instanceof Class<?> //
+                && ((Class<?>) fieldInfo.fieldType).isPrimitive()) {
                 mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                    "(Ljava/lang/Object;Ljava/lang/Object;)V");
             } else {
-                mw.visitVarInsn(ALOAD, 0);
-                mw.visitFieldInsn(GETFIELD, context.getClassName(), fieldInfo.getName() + "_asm_fieldType",
-                                  "Ljava/lang/reflect/Type;");
-                mw.visitLdcInsn(fieldInfo.getSerialzeFeatures());
+                if (fieldInfo.fieldClass == String.class) {
+                    mw.visitLdcInsn(com.alibaba.fastjson.asm.Type.getType(getDesc(String.class)));
+                } else {
+                    mw.visitVarInsn(ALOAD, 0);
+                    mw.visitFieldInsn(GETFIELD, context.className, fieldInfo.name + "_asm_fieldType",
+                                      "Ljava/lang/reflect/Type;");
+                }
+                mw.visitLdcInsn(fieldInfo.serialzeFeatures);
 
                 mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/JSONSerializer", "writeWithFieldName",
                                    "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Type;I)V");
@@ -1204,8 +1219,8 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _before(MethodVisitor mw, Context context) {
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
         mw.visitVarInsn(ILOAD, context.var("seperator"));
         mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/serializer/FilterUtils", "writeBefore",
                            "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;C)C");
@@ -1213,8 +1228,8 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _after(MethodVisitor mw, Context context) {
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
         mw.visitVarInsn(ILOAD, context.var("seperator"));
         mw.visitMethodInsn(INVOKESTATIC, "com/alibaba/fastjson/serializer/FilterUtils", "writeAfter",
                            "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;C)C");
@@ -1224,14 +1239,10 @@ public class ASMSerializerFactory implements Opcodes {
     private void _notWriteDefault(MethodVisitor mw, FieldInfo property, Context context, Label _end) {
         Label elseLabel = new Label();
         
-        mw.visitVarInsn(ALOAD, context.var("out"));
-        mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "NotWriteDefaultValue",
-                          "Lcom/alibaba/fastjson/serializer/SerializerFeature;");
-        mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-                           "(Lcom/alibaba/fastjson/serializer/SerializerFeature;)Z");
+        mw.visitVarInsn(ILOAD, context.var("notWriteDefaultValue"));
         mw.visitJumpInsn(IFEQ, elseLabel);
         
-        Class<?> propertyClass = property.getFieldClass();
+        Class<?> propertyClass = property.fieldClass;
         if (propertyClass == boolean.class) {
             mw.visitVarInsn(ILOAD, context.var("boolean"));
             mw.visitJumpInsn(IFEQ, _end);
@@ -1265,11 +1276,11 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _apply(MethodVisitor mw, FieldInfo property, Context context) {
-        Class<?> propertyClass = property.getFieldClass();
+        Class<?> propertyClass = property.fieldClass;
 
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
+        mw.visitVarInsn(ALOAD, Context.fieldName);
 
         if (propertyClass == byte.class) {
             mw.visitVarInsn(ILOAD, context.var("byte"));
@@ -1327,65 +1338,89 @@ public class ASMSerializerFactory implements Opcodes {
     }
 
     private void _processValue(MethodVisitor mw, FieldInfo property, Context context) {
-        Class<?> propertyClass = property.getFieldClass();
+        Class<?> propertyClass = property.fieldClass;
 
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
+        mw.visitVarInsn(ALOAD, Context.fieldName);
 
+        String valueDesc = "Ljava/lang/Object;";
         if (propertyClass == byte.class) {
             mw.visitVarInsn(ILOAD, context.var("byte"));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Byte", "valueOf", "(B)Ljava/lang/Byte;");
+            valueDesc = "B";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == short.class) {
             mw.visitVarInsn(ILOAD, context.var("short"));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Short", "valueOf", "(S)Ljava/lang/Short;");
+            valueDesc = "S";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == int.class) {
             mw.visitVarInsn(ILOAD, context.var("int"));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;");
+            valueDesc = "I";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == char.class) {
             mw.visitVarInsn(ILOAD, context.var("char"));
             mw.visitMethodInsn(INVOKESTATIC, "java/lang/Character", "valueOf", "(C)Ljava/lang/Character;");
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         } else if (propertyClass == long.class) {
             mw.visitVarInsn(LLOAD, context.var("long", 2));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Long", "valueOf", "(J)Ljava/lang/Long;");
+            valueDesc = "J";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == float.class) {
             mw.visitVarInsn(FLOAD, context.var("float"));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Float", "valueOf", "(F)Ljava/lang/Float;");
+            valueDesc = "F";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == double.class) {
             mw.visitVarInsn(DLOAD, context.var("double", 2));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Double", "valueOf", "(D)Ljava/lang/Double;");
+            valueDesc = "D";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == boolean.class) {
             mw.visitVarInsn(ILOAD, context.var("boolean"));
-            mw.visitMethodInsn(INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;");
+            valueDesc = "Z";
+            mw.visitInsn(ACONST_NULL);
+            mw.visitVarInsn(ASTORE, Context.original);
         } else if (propertyClass == BigDecimal.class) {
             mw.visitVarInsn(ALOAD, context.var("decimal"));
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         } else if (propertyClass == String.class) {
             mw.visitVarInsn(ALOAD, context.var("string"));
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         } else if (propertyClass.isEnum()) {
             mw.visitVarInsn(ALOAD, context.var("enum"));
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         } else if (List.class.isAssignableFrom(propertyClass)) {
             mw.visitVarInsn(ALOAD, context.var("list"));
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         } else {
             mw.visitVarInsn(ALOAD, context.var("object"));
+            mw.visitVarInsn(ASTORE, Context.original);
+            mw.visitVarInsn(ALOAD, Context.original);
         }
-
-        mw.visitVarInsn(ASTORE, context.original());
-        mw.visitVarInsn(ALOAD, context.original());
 
         mw.visitMethodInsn(INVOKESTATIC,
                            "com/alibaba/fastjson/serializer/FilterUtils",
                            "processValue",
-                           "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/Object;");
+                           "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/String;" + valueDesc + ")Ljava/lang/Object;");
 
-        mw.visitVarInsn(ASTORE, context.processValue());
+        mw.visitVarInsn(ASTORE, Context.processValue);
     }
 
     private void _processKey(MethodVisitor mw, FieldInfo property, Context context) {
-        Class<?> propertyClass = property.getFieldClass();
+        Class<?> propertyClass = property.fieldClass;
 
-        mw.visitVarInsn(ALOAD, context.serializer());
-        mw.visitVarInsn(ALOAD, context.obj());
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.serializer);
+        mw.visitVarInsn(ALOAD, Context.obj);
+        mw.visitVarInsn(ALOAD, Context.fieldName);
 
         if (propertyClass == byte.class) {
             mw.visitVarInsn(ILOAD, context.var("byte"));
@@ -1452,11 +1487,11 @@ public class ASMSerializerFactory implements Opcodes {
                                "(Lcom/alibaba/fastjson/serializer/JSONSerializer;Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/String;");
         }
 
-        mw.visitVarInsn(ASTORE, context.fieldName());
+        mw.visitVarInsn(ASTORE, Context.fieldName);
     }
 
     private void _if_write_null(MethodVisitor mw, FieldInfo fieldInfo, Context context) {
-        Class<?> propertyClass = fieldInfo.getFieldClass();
+        Class<?> propertyClass = fieldInfo.fieldClass;
 
         Label _if = new Label();
         Label _else = new Label();
@@ -1471,7 +1506,7 @@ public class ASMSerializerFactory implements Opcodes {
         boolean writeNullStringAsEmpty = false;
         boolean writeNullBooleanAsFalse = false;
         boolean writeNullListAsEmpty = false;
-        JSONField annotation = fieldInfo.getAnnotation(JSONField.class);
+        JSONField annotation = fieldInfo.getAnnotation();
         if (annotation != null) {
             for (SerializerFeature feature : annotation.serialzeFeatures()) {
                 if (feature == SerializerFeature.WriteMapNullValue) {
@@ -1490,10 +1525,8 @@ public class ASMSerializerFactory implements Opcodes {
 
         if (!writeNull) {
             mw.visitVarInsn(ALOAD, context.var("out"));
-            mw.visitFieldInsn(GETSTATIC, "com/alibaba/fastjson/serializer/SerializerFeature", "WriteMapNullValue",
-                              "Lcom/alibaba/fastjson/serializer/SerializerFeature;");
-            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isEnabled",
-                               "(Lcom/alibaba/fastjson/serializer/SerializerFeature;)Z");
+            mw.visitMethodInsn(INVOKEVIRTUAL, "com/alibaba/fastjson/serializer/SerializeWriter", "isWriteMapNullValue",
+                               "()Z");
             mw.visitJumpInsn(IFEQ, _else);
         }
 
@@ -1501,7 +1534,7 @@ public class ASMSerializerFactory implements Opcodes {
         // out.writeFieldNull(seperator, 'fieldName')
         mw.visitVarInsn(ALOAD, context.var("out"));
         mw.visitVarInsn(ILOAD, context.var("seperator"));
-        mw.visitVarInsn(ALOAD, context.fieldName());
+        mw.visitVarInsn(ALOAD, Context.fieldName);
 
         if (propertyClass == String.class || propertyClass == Character.class) {
             if (writeNullStringAsEmpty) {

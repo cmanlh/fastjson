@@ -33,7 +33,7 @@ public class BigDecimalCodec implements ObjectSerializer, ObjectDeserializer {
     public final static BigDecimalCodec instance = new BigDecimalCodec();
 
     public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType, int features) throws IOException {
-        SerializeWriter out = serializer.getWriter();
+        SerializeWriter out = serializer.out;
 
         if (object == null) {
             if (out.isEnabled(SerializerFeature.WriteNullNumberAsZero)) {
@@ -59,7 +59,7 @@ public class BigDecimalCodec implements ObjectSerializer, ObjectDeserializer {
 
     @SuppressWarnings("unchecked")
     public static <T> T deserialze(DefaultJSONParser parser) {
-        final JSONLexer lexer = parser.getLexer();
+        final JSONLexer lexer = parser.lexer;
         if (lexer.token() == JSONToken.LITERAL_INT) {
             long val = lexer.longValue();
             lexer.nextToken(JSONToken.COMMA);

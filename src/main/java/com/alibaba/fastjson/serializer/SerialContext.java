@@ -2,13 +2,13 @@ package com.alibaba.fastjson.serializer;
 
 public class SerialContext {
 
-    private final SerialContext parent;
+    public final SerialContext parent;
 
-    private final Object        object;
+    public final Object        object;
 
-    private final Object        fieldName;
+    public final Object        fieldName;
 
-    private int                 features;
+    public final int                 features;
 
     private int                 fieldFeatures;
 
@@ -20,33 +20,17 @@ public class SerialContext {
         this.fieldFeatures = fieldFeatures;
     }
 
-    public SerialContext getParent() {
-        return parent;
-    }
-
-    public Object getObject() {
-        return object;
-    }
-
-    public Object getFieldName() {
-        return fieldName;
-    }
-
-    public String getPath() {
+    public String toString() {
         if (parent == null) {
             return "$";
         } else {
             if (fieldName instanceof Integer) {
-                return parent.getPath() + "[" + fieldName + "]";
+                return parent.toString() + "[" + fieldName + "]";
             } else {
-                return parent.getPath() + "." + fieldName;
+                return parent.toString() + "." + fieldName;
             }
 
         }
-    }
-
-    public String toString() {
-        return getPath();
     }
 
     public int getFeatures() {
@@ -54,6 +38,7 @@ public class SerialContext {
     }
 
     public boolean isEnabled(SerializerFeature feature) {
-        return SerializerFeature.isEnabled(features, fieldFeatures, feature);
+        int mask = feature.mask;
+        return (features & mask) != 0 || (fieldFeatures & mask) != 0;
     }
 }

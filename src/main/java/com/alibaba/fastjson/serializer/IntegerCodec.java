@@ -34,7 +34,7 @@ public class IntegerCodec implements ObjectSerializer, ObjectDeserializer {
     public static IntegerCodec instance = new IntegerCodec();
 
     public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType, int features) throws IOException {
-        SerializeWriter out = serializer.getWriter();
+        SerializeWriter out = serializer.out;
 
         Number value = (Number) object;
         
@@ -49,7 +49,7 @@ public class IntegerCodec implements ObjectSerializer, ObjectDeserializer {
         
         out.writeInt(value.intValue());
         
-        if (serializer.isEnabled(SerializerFeature.WriteClassName)) {
+        if (out.wrtiteClassName) {
             Class<?> clazz = value.getClass();
             if (clazz == Byte.class) {
                 out.write('B');
@@ -61,7 +61,7 @@ public class IntegerCodec implements ObjectSerializer, ObjectDeserializer {
     
     @SuppressWarnings("unchecked")
     public <T> T deserialze(DefaultJSONParser parser, Type clazz, Object fieldName) {
-        final JSONLexer lexer = parser.getLexer();
+        final JSONLexer lexer = parser.lexer;
 
         if (lexer.token() == JSONToken.NULL) {
             lexer.nextToken(JSONToken.COMMA);
