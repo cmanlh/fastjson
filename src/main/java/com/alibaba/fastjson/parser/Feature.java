@@ -96,7 +96,17 @@ public enum Feature {
      * @since 1.2.5
      * 
      */
-    DisableSpecialKeyDetect
+    DisableSpecialKeyDetect,
+    
+    /**
+     * @since 1.2.9
+     */
+    UseObjectArray,
+
+    /**
+     * @since 1.2.22, 1.1.54.android
+     */
+    SupportNonPublicField
     ;
 
     Feature(){

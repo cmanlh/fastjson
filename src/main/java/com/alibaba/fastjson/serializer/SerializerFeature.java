@@ -81,7 +81,7 @@ public enum SerializerFeature {
     /**
      * @since 1.1.6
      */
-    DisableCircularReferenceDetect,
+    DisableCircularReferenceDetect, // 32768
 
     /**
      * @since 1.1.9
@@ -105,6 +105,7 @@ public enum SerializerFeature {
 
     /**
      * @since 1.1.19
+     * @deprecated
      */
     DisableCheckSpecialChar,
 
@@ -136,7 +137,17 @@ public enum SerializerFeature {
     /**
      * @since 1.2.9
      */
-    WriteNonStringValueAsString
+    WriteNonStringValueAsString,
+    
+    /**
+     * @since 1.2.11
+     */
+    IgnoreErrorGetter,
+
+    /**
+     * @since 1.2.16
+     */
+    WriteBigDecimalAsPlain
     ;
 
     SerializerFeature(){
@@ -182,4 +193,14 @@ public enum SerializerFeature {
         
         return value;
     }
+    
+    public final static SerializerFeature[] EMPTY = new SerializerFeature[0];
+
+    public static final int WRITE_MAP_NULL_FEATURES
+            = WriteMapNullValue.getMask()
+            | WriteNullBooleanAsFalse.getMask()
+            | WriteNullListAsEmpty.getMask()
+            | WriteNullNumberAsZero.getMask()
+            | WriteNullStringAsEmpty.getMask()
+            ;
 }

@@ -1,6 +1,7 @@
 package com.alibaba.json.test.codec;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.reflect.Type;
 import java.util.Collection;
 import java.util.List;
@@ -9,7 +10,6 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.parser.DefaultJSONParser;
 import com.alibaba.fastjson.parser.Feature;
 import com.alibaba.fastjson.parser.ParserConfig;
-import com.alibaba.fastjson.serializer.FilterUtils;
 import com.alibaba.fastjson.serializer.JSONSerializer;
 import com.alibaba.fastjson.serializer.ObjectSerializer;
 import com.alibaba.fastjson.serializer.SerializeConfig;
@@ -89,13 +89,12 @@ public class FastjsonManualCodec implements Codec {
             
             SerializeWriter out = serializer.out;
             
-            out.write('{');
             out.writeFieldValue('{', "height", image.getHeight());
-            out.writeFieldValue(',', "size", image.getSize());
+            out.writeFieldValueStringWithDoubleQuote(',', "size", image.getSize().name());
             
             String tile = image.getTitle();
-            out.writeFieldValue(',', "title", tile);
-            out.writeFieldValue(',', "uri", image.getUri());
+            out.writeFieldValueStringWithDoubleQuoteCheck(',', "title", tile);
+            out.writeFieldValueStringWithDoubleQuoteCheck(',', "uri", image.getUri());
             out.writeFieldValue(',', "width", image.getWidth());
 
             out.write('}');
@@ -112,34 +111,27 @@ public class FastjsonManualCodec implements Codec {
             Media image = (Media) object;
             
             SerializeWriter out = serializer.out;
-            out.write('{');
             out.writeFieldValue('{', "bitrate", image.getBitrate());
             out.writeFieldValue(',', "duration", image.getDuration());
             out.writeFieldValue(',', "height", image.getHeight());
             
             String format = image.getFormat();
-            out.writeFieldValue(',', "format", format);
+            out.writeFieldValueStringWithDoubleQuoteCheck(',', "format", format);
             
             out.writeFieldValue(',', "size", image.getSize());
             out.writeFieldValue(',', "height", image.getHeight());
             
             List<String> persons = image.getPersons();
-            for (int i = 0, size = persons.size(); i < size; ++i) {
-                out.write('[');
-                if (i != 0) {
-                    out.write(',');
-                }
-                out.writeString(persons.get(i));
-                out.write(']');
-            }
-            out.writeFieldValue(',', "player", image.getPlayer());
+            out.writeFieldName("persons");
+            out.write(persons);
+            out.writeFieldValueStringWithDoubleQuote(',', "player", image.getPlayer().name());
             out.writeFieldValue(',', "size", image.getSize());
             
             String title = image.getTitle();
             out.writeFieldValue(',', "title", title);
             
             String uri = image.getUri();
-            out.writeFieldValue(',', "title", uri);
+            out.writeFieldValueStringWithDoubleQuoteCheck(',', "uri", uri);
             
             out.writeFieldValue(',', "width", image.getWidth());
             
@@ -164,11 +156,6 @@ public class FastjsonManualCodec implements Codec {
             out.writeFieldName("image", false);
             List<Image> images = mediaContent.images;
             
-            FilterUtils.applyName(serializer, object, "images");
-            FilterUtils.apply(serializer, object, "image", "images");
-            FilterUtils.processValue(serializer, object, "image", images);
-            
-            
             out.write('[');
             for (int i = 0, size = images.size(); i < size; ++i) {
                 if (i != 0) {
@@ -181,10 +168,21 @@ public class FastjsonManualCodec implements Codec {
             out.write(',');
             
             out.writeFieldName("media", false);
-            mediaSer.write(serializer, mediaContent.media, "media", Image.class, features);
+            mediaSer.write(serializer, mediaContent.media, "media", Media.class, features);
             
             out.write('}');
         }
         
+    }
+
+    @Override
+    public byte[] encodeToBytes(Object object) throws Exception {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public void encode(OutputStream out, Object object) throws Exception {
+        out.write(encodeToBytes(object));        
     }
 }

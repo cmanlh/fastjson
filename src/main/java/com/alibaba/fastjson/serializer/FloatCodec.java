@@ -17,6 +17,8 @@ package com.alibaba.fastjson.serializer;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
 
 import com.alibaba.fastjson.parser.DefaultJSONParser;
 import com.alibaba.fastjson.parser.JSONLexer;
@@ -28,37 +30,36 @@ import com.alibaba.fastjson.util.TypeUtils;
  * @author wenshao[szujobs@hotmail.com]
  */
 public class FloatCodec implements ObjectSerializer, ObjectDeserializer {
+    private NumberFormat decimalFormat;
 
     public static FloatCodec instance = new FloatCodec();
+
+    public FloatCodec(){
+
+    }
+
+    public FloatCodec(DecimalFormat decimalFormat){
+        this.decimalFormat = decimalFormat;
+    }
+
+    public FloatCodec(String decimalFormat){
+        this(new DecimalFormat(decimalFormat));
+    }
 
     public void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType, int features) throws IOException {
         SerializeWriter out = serializer.out;
         
         if (object == null) {
-            if (out.isEnabled(SerializerFeature.WriteNullNumberAsZero)) {
-                out.write('0');
-            } else {
-                out.writeNull();                
-            }
+            out.writeNull(SerializerFeature.WriteNullNumberAsZero);
             return;
         }
 
-        float floatValue = ((Float) object).floatValue(); 
-        
-        if (Float.isNaN(floatValue)) {
-            out.writeNull();
-        } else if (Float.isInfinite(floatValue)) {
-            out.writeNull();
-        } else {
-            String floatText= Float.toString(floatValue);
-            if (floatText.endsWith(".0")) {
-                floatText = floatText.substring(0, floatText.length() - 2);
-            }
+        float floatValue = ((Float) object).floatValue();
+        if (decimalFormat != null) {
+            String floatText = decimalFormat.format(floatValue);
             out.write(floatText);
-            
-            if (out.isEnabled(SerializerFeature.WriteClassName)) {
-                out.write('F');
-            }
+        } else {
+            out.writeFloat(floatValue, true);
         }
     }
     

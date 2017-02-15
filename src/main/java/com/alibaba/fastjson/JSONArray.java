@@ -40,6 +40,8 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.RandomAccess;
 
+import com.alibaba.fastjson.parser.ParserConfig;
+import com.alibaba.fastjson.parser.deserializer.ObjectDeserializer;
 import com.alibaba.fastjson.util.TypeUtils;
 
 /**
@@ -53,7 +55,7 @@ public class JSONArray extends JSON implements List<Object>, Cloneable, RandomAc
     protected transient Type   componentType;
 
     public JSONArray(){
-        this.list = new ArrayList<Object>(10);
+        this.list = new ArrayList<Object>();
     }
 
     public JSONArray(List<Object> list){
@@ -414,6 +416,22 @@ public class JSONArray extends JSON implements List<Object>, Cloneable, RandomAc
         Object value = get(index);
 
         return castToTimestamp(value);
+    }
+
+    /**
+     * @since  1.2.23
+     */
+    public <T> List<T> toJavaList(Class<T> clazz) {
+        List<T> list = new ArrayList<T>(this.size());
+
+        ParserConfig config = ParserConfig.getGlobalInstance();
+
+        for (Object item : this) {
+            T classItem = (T) TypeUtils.cast(item, clazz, config);
+            list.add(classItem);
+        }
+
+        return list;
     }
 
     @Override

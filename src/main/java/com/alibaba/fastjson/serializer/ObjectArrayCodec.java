@@ -46,11 +46,7 @@ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
         Object[] array = (Object[]) object;
 
         if (object == null) {
-            if (out.isEnabled(SerializerFeature.WriteNullListAsEmpty)) {
-                out.write("[]");
-            } else {
-                out.writeNull();
-            }
+            out.writeNull(SerializerFeature.WriteNullListAsEmpty);
             return;
         }
 
@@ -178,7 +174,7 @@ public class ObjectArrayCodec implements ObjectSerializer, ObjectDeserializer {
             componentType = componentClass = clazz.getComponentType();
         }
         JSONArray array = new JSONArray();
-        parser.parseArray(componentClass, array, fieldName);
+        parser.parseArray(componentType, array, fieldName);
 
         return (T) toObjectArray(parser, componentClass, array);
     }

@@ -15,9 +15,12 @@
  */
 package com.alibaba.fastjson.serializer;
 
+import com.alibaba.fastjson.util.TypeUtils;
+
 import java.io.IOException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.util.List;
 
 /**
@@ -30,24 +33,17 @@ public final class ListSerializer implements ObjectSerializer {
     public final void write(JSONSerializer serializer, Object object, Object fieldName, Type fieldType, int features)
                                                                                                        throws IOException {
 
-        boolean writeClassName = serializer.out.wrtiteClassName;
+        boolean writeClassName = serializer.out.isEnabled(SerializerFeature.WriteClassName);
 
         SerializeWriter out = serializer.out;
 
         Type elementType = null;
         if (writeClassName) {
-            if (fieldType instanceof ParameterizedType) {
-                ParameterizedType param = (ParameterizedType) fieldType;
-                elementType = param.getActualTypeArguments()[0];
-            }
+            elementType = TypeUtils.getCollectionItemType(fieldType);
         }
 
         if (object == null) {
-            if (out.isEnabled(SerializerFeature.WriteNullListAsEmpty)) {
-                out.write("[]");
-            } else {
-                out.writeNull();
-            }
+            out.writeNull(SerializerFeature.WriteNullListAsEmpty);
             return;
         }
 
@@ -63,7 +59,7 @@ public final class ListSerializer implements ObjectSerializer {
 
         ObjectSerializer itemSerializer = null;
         try {
-            if (out.prettyFormat) {
+            if (out.isEnabled(SerializerFeature.PrettyFormat)) {
                 out.append('[');
                 serializer.incrementIndent();
 
@@ -112,7 +108,8 @@ public final class ListSerializer implements ObjectSerializer {
                     } else if (clazz == Long.class) {
                         long val = ((Long) item).longValue();
                         if (writeClassName) {
-                            out.writeLongAndChar(val, 'L');
+                            out.writeLong(val);
+                            out.write('L');
                         } else {
                             out.writeLong(val);
                         }
